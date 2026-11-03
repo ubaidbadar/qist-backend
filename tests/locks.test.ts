@@ -6,11 +6,15 @@ import { Installment } from '../src/models/installment';
 import { addMember, call, newCustomer, prepareDatabase, randomImei, signupOrg } from './api';
 import { hasDatabase } from './setup';
 
+let shop!: Awaited<ReturnType<typeof signupOrg>>;
+
 const JOB_SECRET = () => `Bearer ${process.env.INTERNAL_JOB_SECRET}`;
-const runJob = (name: string, secret = JOB_SECRET()) => call<{ ran: boolean }>('POST', `/internal/jobs/${name}`, { headers: { Authorization: secret } });
+const runJob = (name: string, secret = JOB_SECRET()) => {
+  const query = shop?.session?.org?._id ? `?orgId=${shop.session.org._id}` : '';
+  return call<{ ran: boolean }>('POST', `/internal/jobs/${name}${query}`, { headers: { Authorization: secret } });
+};
 
 describe.skipIf(!hasDatabase)('lock engine', () => {
-  let shop: Awaited<ReturnType<typeof signupOrg>>;
   let branch: string;
   let customer: Customer;
 

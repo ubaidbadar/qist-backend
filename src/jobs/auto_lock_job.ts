@@ -1,7 +1,7 @@
-import { daysOverdue, formatRupees, overdueAmount, shouldLock, todayInShops, type LockPolicy } from '@shop/shared';
+import { DEFAULT_LOCK_POLICY, daysOverdue, formatRupees, overdueAmount, shouldLock, todayInShops, type LockPolicy } from '@shop/shared';
 import type { Types } from 'mongoose';
 import { recordSystemAudit } from '../lib/audit';
-import { openCommandOf, policyOf, queueCommand } from '../lib/locks';
+import { openCommandOf, queueCommand } from '../lib/locks';
 import { logger } from '../lib/logger';
 import { Contract } from '../models/contract';
 import { Device } from '../models/device';
@@ -33,17 +33,23 @@ async function considerContract(contractId: Types.ObjectId, orgId: Types.ObjectI
   return true;
 }
 
+interface AutoLockOptions {
+  anyHour?: boolean;
+  orgId?: Types.ObjectId;
+}
+
 /**
  * Hourly: for each retailer whose lock hour it is (Pakistan time), proposes or queues locks for contracts that
  * qualify under its policy. `anyHour` runs every retailer now (manual or external trigger). Safe to run twice.
  */
-export async function runAutoLock(now = new Date(), { anyHour = false } = {}) {
+export async function runAutoLock(now = new Date(), { anyHour = false, orgId }: AutoLockOptions = {}) {
   const today = todayInShops(now);
   const hour = Number(hourFormat.format(now));
   let queued = 0;
 
-  for (const org of await Org.find({ status: 'active' }).select('_id').lean()) {
-    const policy = await policyOf(org._id);
+  const filter = { status: 'active' as const, ...(orgId ? { _id: orgId } : {}) };
+  for (const org of await Org.find(filter).lean()) {
+    const policy: LockPolicy = { ...DEFAULT_LOCK_POLICY, ...org.lockPolicy };
     if (policy.mode === 'off' || (!anyHour && policy.lockHour !== hour)) continue;
     const late = await Installment.distinct('contractId', { orgId: org._id, status: { $in: ['pending', 'partial', 'overdue'] }, dueDate: { $lt: today } });
     for (const contractId of late) {

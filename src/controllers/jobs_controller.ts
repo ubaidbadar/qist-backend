@@ -1,14 +1,16 @@
 import { timingSafeEqual } from 'node:crypto';
+import type { Types } from 'mongoose';
 import { env } from '../config/env';
 import { UnauthorizedError, NotFoundError } from '../lib/errors';
+import { parseId } from '../lib/ids';
 import { publicController } from '../lib/factory';
 import { runAutoLock } from '../jobs/auto_lock_job';
 import { withJobLease } from '../jobs/lease';
 import { runOverdueCheck } from '../jobs/overdue_job';
 
 const JOBS = {
-  overdue: () => runOverdueCheck(),
-  'auto-lock': () => runAutoLock(new Date(), { anyHour: true }),
+  overdue: (orgId?: Types.ObjectId) => runOverdueCheck(new Date(), { orgId }),
+  'auto-lock': (orgId?: Types.ObjectId) => runAutoLock(new Date(), { anyHour: true, orgId }),
 };
 
 const secretMatches = (given: string) => {
@@ -23,8 +25,13 @@ export const run = publicController.createHandlers(async (c) => {
   const name = c.req.param('name') as keyof typeof JOBS;
   const job = JOBS[name];
   if (!job) throw new NotFoundError('Job');
-  const ran = await withJobLease(name, async () => {
-    await job();
+
+  const orgIdParam = c.req.query('orgId');
+  const orgId = orgIdParam ? parseId(orgIdParam, 'Org') : undefined;
+  const leaseKey = orgId ? `${name}:${orgId}` : name;
+
+  const ran = await withJobLease(leaseKey, async () => {
+    await job(orgId);
   });
   return c.json({ data: { job: name, ran } });
 });
