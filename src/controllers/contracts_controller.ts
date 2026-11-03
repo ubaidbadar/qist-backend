@@ -25,12 +25,89 @@ import { Payment } from '../models/payment';
 const withBranch = (orgId: Types.ObjectId) => ({ path: 'branch', select: 'name', match: { orgId } });
 
 async function loadContract(auth: AuthUser, id: string | undefined) {
-  const contract = await Contract.findOne({ _id: parseId(id, 'Contract'), orgId: auth.orgId })
-    .populate<{ branch: { _id: Types.ObjectId; name: string } | null }>(withBranch(auth.orgId))
-    .lean();
+  const contractId = parseId(id, 'Contract');
+  const [contract] = await Contract.aggregate([
+    {
+      $match: {
+        orgId: auth.orgId,
+        _id: contractId,
+      },
+    },
+    {
+      $lookup: {
+        from: 'branches',
+        let: { branchId: '$branchId', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$_id', '$$branchId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
+          { $project: { _id: 1, name: 1 } },
+        ],
+        as: 'branch',
+      },
+    },
+    {
+      $unwind: {
+        path: '$branch',
+        preserveNullAndEmptyArrays: true,
+      },
+    },
+    {
+      $lookup: {
+        from: 'installments',
+        let: { contractId: '$_id', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$contractId', '$$contractId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
+          { $sort: { number: 1 } },
+        ],
+        as: 'installments',
+      },
+    },
+    {
+      $lookup: {
+        from: 'payments',
+        let: { contractId: '$_id', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$contractId', '$$contractId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
+          { $sort: { _id: -1 } },
+          {
+            $lookup: {
+              from: 'branches',
+              let: { branchId: '$branchId', orgId: '$orgId' },
+              pipeline: [
+                { $match: { $expr: { $and: [{ $eq: ['$_id', '$$branchId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
+                { $project: { _id: 1, name: 1 } },
+              ],
+              as: 'branch',
+            },
+          },
+          {
+            $unwind: {
+              path: '$branch',
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+        ],
+        as: 'payments',
+      },
+    },
+    {
+      $lookup: {
+        from: 'deviceCommands',
+        let: { contractId: '$_id', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$contractId', '$$contractId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
+          { $sort: { _id: -1 } },
+          { $limit: 5 },
+        ],
+        as: 'commands',
+      },
+    },
+  ]);
+
   if (!contract) throw new NotFoundError('Contract');
-  const installments = await Installment.find({ orgId: auth.orgId, contractId: contract._id }).sort({ number: 1 }).lean();
-  return { ...contract, installments };
+  return {
+    ...contract,
+    branch: contract.branch ?? null,
+  };
 }
 
 /** GET /contracts?branchId&customerId&status: a customer's contracts across all branches, otherwise the user's branches. */
