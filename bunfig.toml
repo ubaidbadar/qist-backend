@@ -1,0 +1,3 @@
+[test]
+# Points every test run at a throwaway database and drops it afterwards.
+preload = ["./tests/setup.ts"]

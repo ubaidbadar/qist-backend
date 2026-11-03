@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["bun"],
+    "paths": {
+      "@shop/shared": ["./shared/src/index.ts"],
+      "@shop/shared/*": ["./shared/src/*"]
+    }
+  },
+  "include": ["src", "scripts", "tests", "shared/src"]
+}

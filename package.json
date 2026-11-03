@@ -1,0 +1,31 @@
+{
+  "name": "shop-server",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test --timeout 30000",
+    "db:indexes": "bun scripts/create_indexes.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check": "bun run typecheck && bun run lint && bun run test"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "hono": "^4.13.12",
+    "jose": "^6.2.12",
+    "mongoose": "^9.10.3",
+    "nodemailer": "^10.0.13",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.4.2",
+    "@types/nodemailer": "^8.0.2",
+    "eslint": "^10.11.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0"
+  }
+}

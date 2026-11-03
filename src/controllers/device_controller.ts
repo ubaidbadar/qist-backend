@@ -1,0 +1,116 @@
+import {
+  commandAckSchema,
+  deviceCheckinSchema,
+  deviceEnrollSchema,
+  DEVICE_CHECKIN_SECONDS,
+  type DeviceCheckin,
+  type DeviceCredential,
+  type PendingCommand,
+} from '@shop/shared';
+import { withTransaction } from '../db/transaction';
+import { acrossTenants } from '../db/tenant_guard';
+import { recordSystemAudit } from '../lib/audit';
+import { deviceController, publicController } from '../lib/factory';
+import { parseId } from '../lib/ids';
+import { lockScreenFor } from '../lib/lock_screen';
+import { ConflictError, NotFoundError, UnauthorizedError } from '../lib/errors';
+import { createTokenFor, readSecretToken, secretMatches } from '../lib/tokens';
+import { validate } from '../lib/validate';
+import { Device } from '../models/device';
+import { DeviceCommand } from '../models/device_command';
+
+/** Commands the phone still has to carry out, and that a check-in should deliver. */
+const DELIVERABLE = ['pending', 'delivered'] as const;
+
+/**
+ * POST /device/enroll — the device app redeems the one-time QR token for its long-lived credential. Not behind
+ * device auth: the enrolment token itself is the proof. Replaces any earlier enrolment on the same phone.
+ */
+export const enroll = publicController.createHandlers(validate('json', deviceEnrollSchema), async (c) => {
+  const { token, pushToken = '', appVersion = '', platform } = c.req.valid('json');
+  const parsed = readSecretToken(token);
+  if (!parsed) throw new UnauthorizedError('Invalid enrolment token');
+
+  // The token names the phone; the organization is read from the phone itself.
+  const device = await acrossTenants(Device.findById(parsed._id).select('orgId branchId enrollToken.secretHash enrollToken.expiresAt')).lean();
+  const enrollToken = device?.enrollToken;
+  if (!device || !enrollToken || !secretMatches(parsed.secret, enrollToken.secretHash)) {
+    throw new UnauthorizedError('Invalid enrolment token');
+  }
+  if (enrollToken.expiresAt.getTime() < Date.now()) throw new UnauthorizedError('This enrolment QR has expired');
+
+  const credential = createTokenFor(device._id);
+  await withTransaction(async () => {
+    await Device.updateOne(
+      { _id: device._id, orgId: device.orgId },
+      {
+        $set: {
+          enrollment: { secretHash: credential.secretHash, enrolledAt: new Date(), lastCheckInAt: new Date(), pushToken, appVersion, platform },
+        },
+        $unset: { enrollToken: 1 },
+      },
+    );
+    await recordSystemAudit(device.orgId, { action: 'device.enrolled', entity: 'device', entityId: device._id, branchId: device.branchId, summary: 'Phone enrolled the management app' });
+  });
+
+  return c.json({ data: { deviceId: String(device._id), token: credential.token, checkInSeconds: DEVICE_CHECKIN_SECONDS } satisfies DeviceCredential }, 201);
+});
+
+/** POST /device/checkin — the phone reports in, collects pending commands (marked delivered) and the lock screen. */
+export const checkin = deviceController.createHandlers(validate('json', deviceCheckinSchema), async (c) => {
+  const { device } = c.var;
+  const { pushToken, appVersion } = c.req.valid('json');
+
+  const set: Record<string, unknown> = { 'enrollment.lastCheckInAt': new Date() };
+  if (pushToken !== undefined) set['enrollment.pushToken'] = pushToken;
+  if (appVersion !== undefined) set['enrollment.appVersion'] = appVersion;
+
+  const payload = await withTransaction(async () => {
+    await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: set });
+    await DeviceCommand.updateMany(
+      { orgId: device.orgId, deviceId: device._id, status: 'pending' },
+      { $set: { status: 'delivered' } },
+    );
+    const open = await DeviceCommand.find({ orgId: device.orgId, deviceId: device._id, status: { $in: [...DELIVERABLE] } })
+      .select('type')
+      .sort({ _id: 1 })
+      .lean();
+    const current = await Device.findOne({ _id: device._id, orgId: device.orgId }).select('lockState').lean();
+    const commands: PendingCommand[] = open.map((cmd) => ({ _id: String(cmd._id), type: cmd.type }));
+    const lockScreen = await lockScreenFor({ orgId: device.orgId, deviceId: device._id, lockState: current?.lockState ?? 'unlocked' });
+    return { lockState: current?.lockState ?? 'unlocked', lockScreen, commands, checkInSeconds: DEVICE_CHECKIN_SECONDS } satisfies DeviceCheckin;
+  });
+
+  return c.json({ data: payload });
+});
+
+/** The lock state a carried-out command leaves the phone in. */
+const RESULT_LOCK_STATE = { lock: 'locked', unlock: 'unlocked', release: 'unlocked' } as const;
+
+/** POST /device/commands/:id/ack — the phone reports whether it carried out a delivered command. */
+export const acknowledge = deviceController.createHandlers(validate('json', commandAckSchema), async (c) => {
+  const { device } = c.var;
+  const { result, detail = '' } = c.req.valid('json');
+  const commandId = parseId(c.req.param('id'), 'Command');
+
+  const updated = await withTransaction(async () => {
+    const command = await DeviceCommand.findOne({ _id: commandId, orgId: device.orgId, deviceId: device._id }).lean();
+    if (!command) throw new NotFoundError('Command');
+    if (command.status !== 'delivered' && command.status !== 'pending') throw new ConflictError('This command is no longer waiting');
+
+    if (result === 'failed') {
+      await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'failed', decisionReason: detail } });
+      await recordSystemAudit(device.orgId, { action: 'device.command_failed', entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone could not ${command.type} ${command.deviceLabel}${detail ? `: ${detail}` : ''}` });
+      return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+    }
+
+    await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'acknowledged' } });
+    const deviceSet: Record<string, unknown> = { lockState: RESULT_LOCK_STATE[command.type] };
+    if (command.type === 'release') deviceSet.stockStatus = 'released';
+    await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: deviceSet });
+    await recordSystemAudit(device.orgId, { action: `device.${command.type}ed`, entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone confirmed ${command.type} of ${command.deviceLabel}` });
+    return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+  });
+
+  return c.json({ data: updated });
+});
