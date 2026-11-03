@@ -46,21 +46,17 @@ The backend API server for the multi-tenant installment management portal. Built
 - `bun run lint` - Lint source files with ESLint
 - `bun run check` - Run typecheck, lint, and all tests
 
-## Docker & Deployment
+## Deployment
 
-The server includes a multi-stage production Dockerfile.
+The server runs directly with the [Bun](https://bun.sh/) runtime.
 
-### Building and running with Docker
+### Production Execution
 
 ```bash
-# Build the Docker image
-docker build -t shop-api .
-
-# Run the container
-docker run -p 5001:5001 --env-file .env shop-api
+# Start production server
+bun run start
 ```
 
 ### Hosting Platforms
 
-- **Render / Railway / Fly.io**: Connect repository directly; select Dockerfile or Bun environment. Configure environment variables (`MONGODB_URI`, `APP_ORIGIN`, JWT secrets, etc.).
-- **AWS ECS / Google Cloud Run / DigitalOcean App Platform**: Build the container image and deploy with PORT 5001.
+- **Render / Railway / Fly.io / VPS**: Deploy in a Bun environment. Configure environment variables (`MONGODB_URI`, `APP_ORIGIN`, JWT secrets, etc.) and expose `PORT` (default 5001).

@@ -1,7 +1,7 @@
 import { APP_NAME } from '@shop/shared';
 import { publicController } from '../lib/factory';
 
-const API_REFERENCE = new URL('../../../docs/api.md', import.meta.url);
+const API_REFERENCE = new URL('../../docs/api.md', import.meta.url);
 
 /** The page has its own inline stylesheet and nothing else, so it carries its own policy instead of the API's. */
 const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
