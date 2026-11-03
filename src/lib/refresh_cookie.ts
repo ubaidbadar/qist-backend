@@ -7,7 +7,13 @@ const REFRESH_COOKIE = 'qist_refresh';
 const COOKIE_PATH = '/api/v1/auth';
 
 const cookieOptions = () =>
-  ({ path: COOKIE_PATH, httpOnly: true, secure: env.NODE_ENV === 'production', sameSite: 'Lax' }) as const;
+  ({
+    path: COOKIE_PATH,
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: env.NODE_ENV === 'production' ? 'None' : 'Lax',
+    partitioned: env.NODE_ENV === 'production',
+  }) as const;
 
 export const setRefreshCookie = (c: Context, token: string, expires: Date) =>
   setCookie(c, REFRESH_COOKIE, token, { ...cookieOptions(), expires });

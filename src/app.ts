@@ -26,9 +26,15 @@ export function createApp() {
   app.use(
     '/api/*',
     cors({
-      origin: env.APP_ORIGIN,
+      origin: (origin) => {
+        if (!origin) return env.APP_ORIGIN;
+        if (origin === env.APP_ORIGIN) return origin;
+        if (env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+        if (/^https:\/\/[a-z0-9-]+(\.web\.app|\.firebaseapp\.com)$/.test(origin)) return origin;
+        return null;
+      },
       credentials: true,
-      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
+      allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Refresh-Token'],
       exposeHeaders: ['X-Request-Id', 'Retry-After'],
       maxAge: CORS_MAX_AGE_SECONDS,
     }),

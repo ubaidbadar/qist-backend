@@ -19,6 +19,8 @@ describe.skipIf(!hasDatabase)('auth', () => {
     });
 
     expect(res.status).toBe(201);
+    expect(res.data.refreshToken).toBeDefined();
+    expect(typeof res.data.refreshToken).toBe('string');
     expect(res.data.user).toMatchObject({ email, role: 'owner', emailVerifiedAt: null, mustChangePassword: false });
     expect(res.data.user).not.toHaveProperty('passwordHash');
     expect(res.data.user).not.toHaveProperty('tokenVersion');
@@ -77,6 +79,29 @@ describe.skipIf(!hasDatabase)('auth', () => {
     const forged = `qist_refresh=${tokenIdOf(cookie)}.not-the-secret`;
     expect((await refresh(forged)).status).toBe(401);
     expect((await refresh(cookie)).status).toBe(200);
+  });
+
+  test('refresh works with request body refreshToken or X-Refresh-Token header (cross-site fallback)', async () => {
+    const { session } = await signupOrg();
+    expect(session.refreshToken).toBeDefined();
+    const token = session.refreshToken!;
+
+    // Refresh via JSON body
+    const bodyRes = await call<Session>('POST', '/auth/refresh', { body: { refreshToken: token } });
+    expect(bodyRes.status).toBe(200);
+    expect(bodyRes.data.refreshToken).toBeDefined();
+    const nextToken = bodyRes.data.refreshToken!;
+    expect(nextToken).not.toBe(token);
+
+    // Refresh via X-Refresh-Token header
+    const headerRes = await call<Session>('POST', '/auth/refresh', { headers: { 'X-Refresh-Token': nextToken } });
+    expect(headerRes.status).toBe(200);
+    expect(headerRes.data.refreshToken).toBeDefined();
+
+    // Logout via body
+    const logoutRes = await call('POST', '/auth/logout', { body: { refreshToken: headerRes.data.refreshToken } });
+    expect(logoutRes.status).toBe(200);
+    expect((await call('POST', '/auth/refresh', { body: { refreshToken: headerRes.data.refreshToken } })).status).toBe(401);
   });
 
   test('logout ends the session', async () => {

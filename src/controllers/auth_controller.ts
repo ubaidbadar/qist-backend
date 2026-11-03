@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { loginSchema, signupSchema } from '@shop/shared';
 import { acrossTenants } from '../db/tenant_guard';
 import { withTransaction } from '../db/transaction';
@@ -52,10 +53,27 @@ export const login = publicController.createHandlers(validate('json', loginSchem
   return sendSession(c, user);
 });
 
-/** POST /auth/refresh: exchanges the refresh cookie for a new session. */
+async function extractRefreshToken(c: Context): Promise<string | undefined> {
+  const cookie = readRefreshCookie(c);
+  if (cookie) return cookie;
+
+  const header = c.req.header('x-refresh-token');
+  if (header) return header;
+
+  try {
+    const body = (await c.req.json()) as Record<string, unknown> | null;
+    if (body && typeof body.refreshToken === 'string') return body.refreshToken;
+  } catch {
+    // Body is empty or not JSON
+  }
+  return undefined;
+}
+
+/** POST /auth/refresh: exchanges the refresh cookie or token for a new session. */
 export const refresh = publicController.createHandlers(async (c) => {
   try {
-    return await sendSession(c, await useRefreshToken(readRefreshCookie(c)));
+    const token = await extractRefreshToken(c);
+    return await sendSession(c, await useRefreshToken(token));
   } catch (err) {
     clearRefreshCookie(c); // a refresh that failed once will fail again; drop the dead cookie
     throw err;
@@ -64,7 +82,8 @@ export const refresh = publicController.createHandlers(async (c) => {
 
 /** POST /auth/logout */
 export const logout = publicController.createHandlers(async (c) => {
-  await endSession(readRefreshCookie(c));
+  const token = await extractRefreshToken(c);
+  await endSession(token);
   clearRefreshCookie(c);
   return c.json({ data: { ok: true } });
 });

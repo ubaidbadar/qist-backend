@@ -36,7 +36,7 @@ export async function sendSession(c: Context, user: { _id: Types.ObjectId; orgId
   setRefreshCookie(c, token, expiresAt);
 
   const accessToken = await signAccessToken({ sub: String(user._id), org: String(user.orgId), ver: user.tokenVersion });
-  return c.json({ data: { accessToken, ...me } }, status);
+  return c.json({ data: { accessToken, refreshToken: token, ...me } }, status);
 }
 
 /** Signs a user out on every device. */
