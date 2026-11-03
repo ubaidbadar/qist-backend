@@ -104,9 +104,11 @@ async function loadContract(auth: AuthUser, id: string | undefined) {
   ]);
 
   if (!contract) throw new NotFoundError('Contract');
+  const device = await Device.findOne({ _id: contract.deviceId, orgId: auth.orgId }).select('lockState').lean();
   return {
     ...contract,
     branch: contract.branch ?? null,
+    deviceLockState: device?.lockState ?? null,
   };
 }
 
