@@ -46,8 +46,8 @@ export const record = authedController.createHandlers(validate('json', paymentCr
       if (!contract) throw new NotFoundError('Contract');
       if (contract.status !== 'active') throw new ConflictError('Only active contracts take payments');
 
-      const allocations = await planAllocations(auth.orgId, contract._id, input.amount);
-      await applyToInstallments(auth.orgId, contract._id, allocations, 1);
+      const { allocations, installments } = await planAllocations(auth.orgId, contract._id, input.amount);
+      await applyToInstallments(auth.orgId, contract._id, allocations, 1, installments);
       const paidOff = contract.paidTotal + input.amount === contract.totalPayable + contract.lateFees;
       await Contract.updateOne({ _id: contract._id, orgId: auth.orgId }, { $inc: { paidTotal: input.amount }, ...(paidOff ? { $set: { status: 'completed' } } : {}) });
       if (paidOff) await Device.updateOne({ _id: contract.deviceId, orgId: auth.orgId }, { $set: { stockStatus: 'released' } });

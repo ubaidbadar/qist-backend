@@ -20,27 +20,50 @@ export async function nextReceiptNumber(orgId: Types.ObjectId, branchId: Types.O
  * Adds (`sign` 1) or takes back (`sign` -1, a void) money on installments, and recalculates each one's status.
  * Reads the schedule inside the caller's transaction, so concurrent payments see each other's changes.
  */
-export async function applyToInstallments(orgId: Types.ObjectId, contractId: Types.ObjectId, allocations: Allocation[], sign: 1 | -1) {
-  const installments = await Installment.find({ orgId, contractId }).lean();
+type InstallmentRows = Awaited<ReturnType<typeof loadInstallments>>;
+
+const loadInstallments = (orgId: Types.ObjectId, contractId: Types.ObjectId) =>
+  Installment.find({ orgId, contractId }).sort({ number: 1 }).lean();
+
+/** One schedule read and one bulk write, instead of rereading and updating each installment individually. */
+export async function applyToInstallments(
+  orgId: Types.ObjectId,
+  contractId: Types.ObjectId,
+  allocations: Allocation[],
+  sign: 1 | -1,
+  loaded?: InstallmentRows,
+) {
+  if (!allocations.length) return;
+  const installments = loaded ?? (await loadInstallments(orgId, contractId));
+  const byNumber = new Map(installments.map((item) => [item.number, item]));
   const today = todayInShops();
-  for (const { number, amount } of allocations) {
-    const installment = installments.find((item) => item.number === number);
-    if (!installment) continue;
+  const operations = allocations.flatMap(({ number, amount }) => {
+    const installment = byNumber.get(number);
+    if (!installment) return [];
     const paidAmount = installment.paidAmount + sign * amount;
-    await Installment.updateOne({ _id: installment._id, orgId }, { $set: { paidAmount, status: installmentStatus({ ...installment, paidAmount }, today) } });
-  }
-  return installments;
+    return [{
+      updateOne: {
+        filter: { _id: installment._id, orgId, contractId },
+        update: { $set: { paidAmount, status: installmentStatus({ ...installment, paidAmount }, today) } },
+      },
+    }];
+  });
+  if (operations.length) await Installment.bulkWrite(operations);
 }
 
 /** Where a new payment goes, oldest installment first. A payment above the balance is a form error. */
 export async function planAllocations(orgId: Types.ObjectId, contractId: Types.ObjectId, amount: number) {
-  const installments = await Installment.find({ orgId, contractId }).sort({ number: 1 }).lean();
+  const installments = await loadInstallments(orgId, contractId);
   try {
     const allocations = allocatePayment(installments, amount);
-    return allocations.flatMap((allocation) => {
-      const installment = installments.find((i) => i.number === allocation.number);
-      return installment ? [{ ...allocation, installmentId: installment._id }] : [];
-    });
+    const byNumber = new Map(installments.map((item) => [item.number, item]));
+    return {
+      installments,
+      allocations: allocations.flatMap((allocation) => {
+        const installment = byNumber.get(allocation.number);
+        return installment ? [{ ...allocation, installmentId: installment._id }] : [];
+      }),
+    };
   } catch (err) {
     if (err instanceof RangeError) throw new ValidationError(err.message, fieldDetails('amount', err.message));
     throw err;

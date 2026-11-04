@@ -66,7 +66,12 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
   if (appVersion !== undefined) set['enrollment.appVersion'] = appVersion;
 
   const payload = await withTransaction(async () => {
-    await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: set });
+    // Return the updated lock state with the check-in write; no second device read.
+    const current = await Device.findOneAndUpdate(
+      { _id: device._id, orgId: device.orgId },
+      { $set: set },
+      { returnDocument: 'after' },
+    ).select('lockState').lean();
     await DeviceCommand.updateMany(
       { orgId: device.orgId, deviceId: device._id, status: 'pending' },
       { $set: { status: 'delivered' } },
@@ -75,7 +80,6 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
       .select('type')
       .sort({ _id: 1 })
       .lean();
-    const current = await Device.findOne({ _id: device._id, orgId: device.orgId }).select('lockState').lean();
     const commands: PendingCommand[] = open.map((cmd) => ({ _id: String(cmd._id), type: cmd.type }));
     const lockScreen = await lockScreenFor({ orgId: device.orgId, deviceId: device._id, lockState: current?.lockState ?? 'unlocked' });
     return { lockState: current?.lockState ?? 'unlocked', lockScreen, commands, checkInSeconds: DEVICE_CHECKIN_SECONDS } satisfies DeviceCheckin;
@@ -99,17 +103,27 @@ export const acknowledge = deviceController.createHandlers(validate('json', comm
     if (command.status !== 'delivered' && command.status !== 'pending') throw new ConflictError('This command is no longer waiting');
 
     if (result === 'failed') {
-      await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'failed', decisionReason: detail } });
+      const failed = await DeviceCommand.findOneAndUpdate(
+        { _id: command._id, orgId: device.orgId, deviceId: device._id, status: { $in: [...DELIVERABLE] } },
+        { $set: { status: 'failed', decisionReason: detail } },
+        { returnDocument: 'after' },
+      ).lean();
+      if (!failed) throw new ConflictError('This command is no longer waiting');
       await recordSystemAudit(device.orgId, { action: 'device.command_failed', entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone could not ${command.type} ${command.deviceLabel}${detail ? `: ${detail}` : ''}` });
-      return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+      return failed;
     }
 
-    await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'acknowledged' } });
+    const acknowledged = await DeviceCommand.findOneAndUpdate(
+      { _id: command._id, orgId: device.orgId, deviceId: device._id, status: { $in: [...DELIVERABLE] } },
+      { $set: { status: 'acknowledged' } },
+      { returnDocument: 'after' },
+    ).lean();
+    if (!acknowledged) throw new ConflictError('This command is no longer waiting');
     const deviceSet: Record<string, unknown> = { lockState: RESULT_LOCK_STATE[command.type] };
     if (command.type === 'release') deviceSet.stockStatus = 'released';
     await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: deviceSet });
     await recordSystemAudit(device.orgId, { action: `device.${command.type}ed`, entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone confirmed ${command.type} of ${command.deviceLabel}` });
-    return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+    return acknowledged;
   });
 
   return c.json({ data: updated });

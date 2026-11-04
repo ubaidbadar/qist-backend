@@ -101,14 +101,25 @@ async function loadContract(auth: AuthUser, id: string | undefined) {
         as: 'commands',
       },
     },
+    {
+      $lookup: {
+        from: 'devices',
+        let: { deviceId: '$deviceId', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$_id', '$deviceId'] }, { $eq: ['$orgId', '$orgId'] }] } } },
+          { $project: { lockState: 1 } },
+        ],
+        as: 'matchedDevice',
+      },
+    },
+    { $set: { deviceLockState: { $ifNull: [{ $arrayElemAt: ['$matchedDevice.lockState', 0] }, null] } } },
+    { $unset: 'matchedDevice' },
   ]);
 
   if (!contract) throw new NotFoundError('Contract');
-  const device = await Device.findOne({ _id: contract.deviceId, orgId: auth.orgId }).select('lockState').lean();
   return {
     ...contract,
     branch: contract.branch ?? null,
-    deviceLockState: device?.lockState ?? null,
   };
 }
 
