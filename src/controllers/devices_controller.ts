@@ -117,24 +117,33 @@ export const update = authedController.createHandlers(validate('json', deviceUpd
 export const transfer = authedController.createHandlers(validate('json', deviceTransferSchema), async (c) => {
   const { auth } = c.var;
   const existing = await findInStock(auth, c.req.param('id'));
-  const toBranchId = await usableBranch(auth, c.req.valid('json').toBranchId, 'toBranchId');
+  const requestedBranchId = c.req.valid('json').toBranchId;
+  if (!worksAt(auth, requestedBranchId)) throw new ForbiddenError("You don't work at that branch");
+  const toBranch = await Branch.findOne({ _id: requestedBranchId, orgId: auth.orgId, active: true }).select('name').lean();
+  if (!toBranch) throw new ValidationError('Choose an active branch', fieldDetails('toBranchId', 'Unknown or inactive branch'));
+  const toBranchId = toBranch._id;
   if (toBranchId.equals(existing.branchId)) {
     throw new ValidationError('The phone is already at this branch', fieldDetails('toBranchId', 'Choose another branch'));
   }
-  const toBranch = await Branch.findOne({ _id: toBranchId, orgId: auth.orgId }).select('name').lean();
 
-  await withTransaction(async () => {
-    await Device.updateOne({ _id: existing._id, orgId: auth.orgId }, { $set: { branchId: toBranchId } });
+  const transferred = await withTransaction(async () => {
+    const updated = await Device.findOneAndUpdate(
+      { _id: existing._id, orgId: auth.orgId, stockStatus: 'in_stock' },
+      { $set: { branchId: toBranchId } },
+      { returnDocument: 'after' },
+    ).select(costField(auth)).populate(withBranch(auth.orgId)).lean();
+    if (!updated) throw new ConflictError('Only phones in stock can be changed');
     await recordAudit(auth, {
       action: 'device.transferred',
       entity: 'device',
       entityId: existing._id,
       branchId: toBranchId,
-      summary: `Moved ${existing.brand} ${existing.model} from ${existing.branch?.name} to ${toBranch?.name}`,
+      summary: `Moved ${existing.brand} ${existing.model} from ${existing.branch?.name} to ${toBranch.name}`,
       metadata: { fromBranchId: existing.branchId, toBranchId },
     });
+    return updated;
   });
-  return c.json({ data: await findDevice(auth, String(existing._id)) });
+  return c.json({ data: transferred });
 });
 
 /**

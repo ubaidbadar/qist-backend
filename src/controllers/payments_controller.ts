@@ -28,12 +28,12 @@ export const record = authedController.createHandlers(validate('json', paymentCr
   const contractId = parseId(c.req.param('id'), 'Contract');
 
   const replay = async () => {
-    const earlier = await Payment.findOne({ orgId: auth.orgId, idempotencyKey: key }).lean();
+    const earlier = await Payment.findOne({ orgId: auth.orgId, idempotencyKey: key }).populate(withBranch(auth.orgId)).lean();
     if (!earlier) return null;
     if (!earlier.contractId.equals(contractId) || earlier.amount !== input.amount) {
       throw new ConflictError('This request key was already used for a different payment');
     }
-    return c.json({ data: await findPayment(auth, earlier._id) });
+    return c.json({ data: earlier });
   };
   const earlier = await replay();
   if (earlier) return earlier;
