@@ -44,6 +44,7 @@ describe.skipIf(!hasDatabase)('contracts', () => {
       markupAmount: 1_250_000,
       totalPayable: 6_250_000,
       status: 'active',
+      deviceLockState: 'unlocked',
       customerName: customer.fullName,
       deviceLabel: 'Infinix Hot 40',
       branch: { name: 'Main Branch' },

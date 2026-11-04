@@ -19,7 +19,8 @@ const installmentSchema = new Schema(
 );
 
 installmentSchema.index({ orgId: 1, contractId: 1, number: 1 }); // a contract's schedule, in order
-installmentSchema.index({ orgId: 1, status: 1, dueDate: 1 }); // the overdue job, overdue accounts, reminders
+installmentSchema.index({ orgId: 1, status: 1, dueDate: 1 }); // organization-wide overdue jobs
+installmentSchema.index({ orgId: 1, branchId: 1, status: 1, dueDate: 1 }); // branch-scoped overdue dashboard
 
 installmentSchema.plugin(tenantGuard);
 

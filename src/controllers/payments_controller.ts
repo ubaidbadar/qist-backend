@@ -28,12 +28,12 @@ export const record = authedController.createHandlers(validate('json', paymentCr
   const contractId = parseId(c.req.param('id'), 'Contract');
 
   const replay = async () => {
-    const earlier = await Payment.findOne({ orgId: auth.orgId, idempotencyKey: key }).lean();
+    const earlier = await Payment.findOne({ orgId: auth.orgId, idempotencyKey: key }).populate(withBranch(auth.orgId)).lean();
     if (!earlier) return null;
     if (!earlier.contractId.equals(contractId) || earlier.amount !== input.amount) {
       throw new ConflictError('This request key was already used for a different payment');
     }
-    return c.json({ data: await findPayment(auth, earlier._id) });
+    return c.json({ data: earlier });
   };
   const earlier = await replay();
   if (earlier) return earlier;
@@ -46,8 +46,8 @@ export const record = authedController.createHandlers(validate('json', paymentCr
       if (!contract) throw new NotFoundError('Contract');
       if (contract.status !== 'active') throw new ConflictError('Only active contracts take payments');
 
-      const allocations = await planAllocations(auth.orgId, contract._id, input.amount);
-      await applyToInstallments(auth.orgId, contract._id, allocations, 1);
+      const { allocations, installments } = await planAllocations(auth.orgId, contract._id, input.amount);
+      await applyToInstallments(auth.orgId, contract._id, allocations, 1, installments);
       const paidOff = contract.paidTotal + input.amount === contract.totalPayable + contract.lateFees;
       await Contract.updateOne({ _id: contract._id, orgId: auth.orgId }, { $inc: { paidTotal: input.amount }, ...(paidOff ? { $set: { status: 'completed' } } : {}) });
       if (paidOff) await Device.updateOne({ _id: contract.deviceId, orgId: auth.orgId }, { $set: { stockStatus: 'released' } });

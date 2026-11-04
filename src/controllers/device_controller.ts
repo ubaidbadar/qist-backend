@@ -66,7 +66,12 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
   if (appVersion !== undefined) set['enrollment.appVersion'] = appVersion;
 
   const payload = await withTransaction(async () => {
-    await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: set });
+    // Return the updated lock state with the check-in write; no second device read.
+    const current = await Device.findOneAndUpdate(
+      { _id: device._id, orgId: device.orgId },
+      { $set: set },
+      { returnDocument: 'after' },
+    ).select('lockState').lean();
     await DeviceCommand.updateMany(
       { orgId: device.orgId, deviceId: device._id, status: 'pending' },
       { $set: { status: 'delivered' } },
@@ -75,7 +80,6 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
       .select('type')
       .sort({ _id: 1 })
       .lean();
-    const current = await Device.findOne({ _id: device._id, orgId: device.orgId }).select('lockState').lean();
     const commands: PendingCommand[] = open.map((cmd) => ({ _id: String(cmd._id), type: cmd.type }));
     const lockScreen = await lockScreenFor({ orgId: device.orgId, deviceId: device._id, lockState: current?.lockState ?? 'unlocked' });
     return { lockState: current?.lockState ?? 'unlocked', lockScreen, commands, checkInSeconds: DEVICE_CHECKIN_SECONDS } satisfies DeviceCheckin;
@@ -94,22 +98,42 @@ export const acknowledge = deviceController.createHandlers(validate('json', comm
   const commandId = parseId(c.req.param('id'), 'Command');
 
   const updated = await withTransaction(async () => {
-    const command = await DeviceCommand.findOne({ _id: commandId, orgId: device.orgId, deviceId: device._id }).lean();
-    if (!command) throw new NotFoundError('Command');
-    if (command.status !== 'delivered' && command.status !== 'pending') throw new ConflictError('This command is no longer waiting');
+    // A successful acknowledgement takes one atomic read/write, not a read, write and reread.
+    const command = await DeviceCommand.findOneAndUpdate(
+      { _id: commandId, orgId: device.orgId, deviceId: device._id, status: { $in: [...DELIVERABLE] } },
+      { $set: result === 'failed' ? { status: 'failed', decisionReason: detail } : { status: 'acknowledged' } },
+      { returnDocument: 'after' },
+    ).lean();
 
-    if (result === 'failed') {
-      await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'failed', decisionReason: detail } });
-      await recordSystemAudit(device.orgId, { action: 'device.command_failed', entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone could not ${command.type} ${command.deviceLabel}${detail ? `: ${detail}` : ''}` });
-      return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+    if (!command) {
+      // Keep 404 vs 409 responses on the uncommon invalid/stale acknowledgement path.
+      const existing = await DeviceCommand.exists({ _id: commandId, orgId: device.orgId, deviceId: device._id });
+      if (!existing) throw new NotFoundError('Command');
+      throw new ConflictError('This command is no longer waiting');
     }
 
-    await DeviceCommand.updateOne({ _id: command._id, orgId: device.orgId }, { $set: { status: 'acknowledged' } });
+    if (result === 'failed') {
+      await recordSystemAudit(device.orgId, {
+        action: 'device.command_failed',
+        entity: 'device',
+        entityId: device._id,
+        branchId: device.branchId,
+        summary: `Phone could not ${command.type} ${command.deviceLabel}${detail ? `: ${detail}` : ''}`,
+      });
+      return command;
+    }
+
     const deviceSet: Record<string, unknown> = { lockState: RESULT_LOCK_STATE[command.type] };
     if (command.type === 'release') deviceSet.stockStatus = 'released';
     await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: deviceSet });
-    await recordSystemAudit(device.orgId, { action: `device.${command.type}ed`, entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Phone confirmed ${command.type} of ${command.deviceLabel}` });
-    return DeviceCommand.findOne({ _id: command._id, orgId: device.orgId }).lean();
+    await recordSystemAudit(device.orgId, {
+      action: `device.${command.type}ed`,
+      entity: 'device',
+      entityId: device._id,
+      branchId: device.branchId,
+      summary: `Phone confirmed ${command.type} of ${command.deviceLabel}`,
+    });
+    return command;
   });
 
   return c.json({ data: updated });

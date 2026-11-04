@@ -59,6 +59,22 @@ describe.skipIf(!hasDatabase)('lock engine', () => {
     await setPolicy({ lateFee: { enabled: false } });
   });
 
+  test('late fees on multiple installments are grouped and never charged twice', async () => {
+    const contract = await overdueContract(12);
+    const orgId = new Types.ObjectId(shop.session.org._id);
+    await Installment.updateOne(
+      { orgId, contractId: new Types.ObjectId(contract._id), number: 2 },
+      { $set: { dueDate: addDays(todayInShops(), -9) } },
+    );
+    await setPolicy({ lateFee: { enabled: true, amount: 15_000 } });
+    await runJob('overdue');
+    await runJob('overdue');
+    const result = (await call<ContractWithSchedule>('GET', `/contracts/${contract._id}`, { token: shop.token })).data;
+    expect(result.lateFees).toBe(30_000);
+    expect(result.installments.slice(0, 2).map((i) => i.lateFee)).toEqual([15_000, 15_000]);
+    await setPolicy({ lateFee: { enabled: false } });
+  });
+
   test('approval mode proposes a lock once; a manager approves it', async () => {
     const contract = await overdueContract(5);
     await runJob('auto-lock');

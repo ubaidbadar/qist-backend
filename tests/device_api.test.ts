@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { addDays, DEVICE_ADMIN_COMPONENT, todayInShops, type Contract, type Customer, type DeviceCheckin, type DeviceCredential, type Device as DeviceDoc, type EnrollmentTicket } from '@shop/shared';
+import { addDays, DEVICE_ADMIN_COMPONENT, todayInShops, type Contract, type ContractWithSchedule, type Customer, type DeviceCheckin, type DeviceCommand, type DeviceCredential, type Device as DeviceDoc, type EnrollmentTicket } from '@shop/shared';
 import { Types } from 'mongoose';
 import { Device } from '../src/models/device';
 import { call, newCustomer, prepareDatabase, randomImei, signupOrg } from './api';
@@ -114,8 +114,14 @@ describe.skipIf(!hasDatabase)('device API (Phase 2)', () => {
     expect(delivered.data.commands).toHaveLength(1);
     expect(delivered.data.commands[0].type).toBe('lock');
 
-    const acked = await ack(token, delivered.data.commands[0]._id, 'applied');
+    const acked = await call<DeviceCommand>('POST', `/device/commands/${delivered.data.commands[0]._id}/ack`, {
+      headers: { Authorization: `Bearer ${token}` },
+      body: { result: 'applied' },
+    });
     expect(acked.status).toBe(200);
+    expect(acked.data.status).toBe('acknowledged');
+    const detail = await call<ContractWithSchedule>('GET', `/contracts/${contract._id}`, { token: shop.token });
+    expect(detail.data.deviceLockState).toBe('locked');
 
     const after = await checkin(token);
     expect(after.data.lockState).toBe('locked');
