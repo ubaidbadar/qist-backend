@@ -8,7 +8,7 @@ import {
   type DueInstallment,
   type OverdueAccount,
 } from '@shop/shared';
-import { Types } from 'mongoose';
+import { Types, type PipelineStage } from 'mongoose';
 import { Installment } from '../models/installment';
 import { OPEN_STATUSES } from '../models/device_command';
 import type { AuthUser } from './auth_user';
@@ -16,7 +16,7 @@ import { scopeFilter } from './scope';
 
 const MAX_ACCOUNTS = 300;
 
-interface OverdueRow {
+export interface OverdueRow {
   _id: Types.ObjectId;
   branchId: Types.ObjectId;
   customerId: Types.ObjectId;
@@ -34,11 +34,10 @@ interface OverdueRow {
  * and repeatedly scanning each array in JavaScript. Only 300 active contracts may reach the
  * schedule/command/device lookups. Every lookup is explicitly tenant scoped.
  */
-export async function overdueAccounts(auth: AuthUser, branchId?: string): Promise<OverdueAccount[]> {
-  const today = todayInShops();
+/** Shared overdue pipeline, reused by Lock Center and the single-request dashboard. */
+export function overdueAccountPipeline(auth: AuthUser, today: string, branchId?: string): PipelineStage[] {
   const scope = { ...scopeFilter(auth), ...(branchId ? { branchId: new Types.ObjectId(branchId) } : {}) };
-
-  const rows = await Installment.aggregate<OverdueRow>([
+  return [
     { $match: { ...scope, status: { $in: ['pending', 'partial', 'overdue'] }, dueDate: { $lt: today } } },
     { $group: { _id: '$contractId' } },
     {
@@ -92,8 +91,11 @@ export async function overdueAccounts(auth: AuthUser, branchId?: string): Promis
         as: 'devices',
       },
     },
-  ]);
+  ];
+}
 
+/** Exactly the same totals and command/status semantics as the original Lock Center response. */
+export function mapOverdueRows(rows: OverdueRow[], today: string): OverdueAccount[] {
   return rows
     .map((row) => {
       const late = row.schedule
@@ -118,4 +120,10 @@ export async function overdueAccounts(auth: AuthUser, branchId?: string): Promis
     })
     .filter((account) => account.overdueAmount > 0)
     .sort((a, b) => b.daysOverdue - a.daysOverdue);
+}
+
+export async function overdueAccounts(auth: AuthUser, branchId?: string): Promise<OverdueAccount[]> {
+  const today = todayInShops();
+  const rows = await Installment.aggregate<OverdueRow>(overdueAccountPipeline(auth, today, branchId));
+  return mapOverdueRows(rows, today);
 }
