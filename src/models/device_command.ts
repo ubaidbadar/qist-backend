@@ -31,6 +31,7 @@ const deviceCommandSchema = new Schema(
 
 deviceCommandSchema.index({ orgId: 1, contractId: 1, _id: -1 }); // a contract's lock history
 deviceCommandSchema.index({ orgId: 1, status: 1, _id: -1 }); // Lock Center queues
+deviceCommandSchema.index({ orgId: 1, deviceId: 1, status: 1, _id: 1 }); // phone check-ins, including delivered commands
 // One open command per phone at a time, guaranteed by the database.
 deviceCommandSchema.index({ orgId: 1, deviceId: 1 }, { unique: true, partialFilterExpression: { status: { $in: [...OPEN_STATUSES] } } });
 

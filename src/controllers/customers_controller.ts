@@ -84,8 +84,13 @@ export const update = authedController.createHandlers(validate('json', customerU
   if (input.homeBranchId) await usableBranch(auth, input.homeBranchId, 'homeBranchId');
   if (input.cnic && input.cnic !== existing.cnic) await assertCnicIsFree(auth, input.cnic, existing._id);
 
-  await withTransaction(async () => {
-    await Customer.updateOne({ _id: existing._id, orgId: auth.orgId }, { $set: input });
+  const updated = await withTransaction(async () => {
+    const result = await Customer.findOneAndUpdate(
+      { _id: existing._id, orgId: auth.orgId },
+      { $set: input },
+      { returnDocument: 'after' },
+    ).populate(withHomeBranch(auth.orgId)).lean();
+    if (!result) throw new NotFoundError('Customer');
     await recordAudit(auth, {
       action: 'customer.updated',
       entity: 'customer',
@@ -94,8 +99,9 @@ export const update = authedController.createHandlers(validate('json', customerU
       summary: `Updated customer ${input.fullName ?? existing.fullName}`,
       metadata: { fields: Object.keys(input) },
     });
+    return result;
   });
-  return c.json({ data: await findCustomer(auth, String(existing._id)) });
+  return c.json({ data: updated });
 });
 
 /** DELETE /customers/:id: owners only, for a customer added by mistake. */

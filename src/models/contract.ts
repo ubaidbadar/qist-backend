@@ -40,6 +40,7 @@ const contractSchema = new Schema(
 contractSchema.index({ orgId: 1, branchId: 1, _id: -1 }); // one branch's sales, newest first
 contractSchema.index({ orgId: 1, _id: -1 }); // all branches (owners), newest first
 contractSchema.index({ orgId: 1, customerId: 1 }); // a customer's contracts
+contractSchema.index({ orgId: 1, deviceId: 1, status: 1, _id: -1 }); // latest active contract on a checking-in phone
 
 contractSchema.virtual('branch', { ref: 'Branch', localField: 'branchId', foreignField: '_id', justOne: true });
 

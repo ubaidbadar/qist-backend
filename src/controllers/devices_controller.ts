@@ -93,8 +93,13 @@ export const update = authedController.createHandlers(validate('json', deviceUpd
   if (input.imeis) await assertImeisAreFree(auth, input.imeis, existing._id);
   const changes = can(auth.role, 'stock.costs') && costPrice !== undefined ? { ...input, costPrice } : input;
 
-  await withTransaction(async () => {
-    await Device.updateOne({ _id: existing._id, orgId: auth.orgId }, { $set: changes });
+  const updated = await withTransaction(async () => {
+    const result = await Device.findOneAndUpdate(
+      { _id: existing._id, orgId: auth.orgId, stockStatus: 'in_stock' },
+      { $set: changes },
+      { returnDocument: 'after' },
+    ).select(costField(auth)).populate(withBranch(auth.orgId)).lean();
+    if (!result) throw new ConflictError('Only phones in stock can be changed');
     await recordAudit(auth, {
       action: 'device.updated',
       entity: 'device',
@@ -103,8 +108,9 @@ export const update = authedController.createHandlers(validate('json', deviceUpd
       summary: `Updated ${input.brand ?? existing.brand} ${input.model ?? existing.model}`,
       metadata: { fields: Object.keys(changes) },
     });
+    return result;
   });
-  return c.json({ data: await findDevice(auth, String(existing._id)) });
+  return c.json({ data: updated });
 });
 
 /** POST /devices/:id/transfer: moves a phone in stock to another branch. */
