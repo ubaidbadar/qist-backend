@@ -27,13 +27,38 @@ export async function runOverdueCheck(now = new Date(), { orgId }: OverdueOption
     const fee = org.lateFee?.enabled ? (org.lateFee.amount ?? 0) : 0;
     if (!fee) continue;
     const { graceDays } = { ...DEFAULT_LOCK_POLICY, ...org.lockPolicy };
-    const feeDue = await Installment.find({ orgId: org._id, status: 'overdue', lateFee: 0, dueDate: { $lt: addDays(today, -graceDays) } }).lean();
+    const cutoff = addDays(today, -graceDays);
+    const feeDue = await Installment.find({
+      orgId: org._id,
+      status: 'overdue',
+      lateFee: 0,
+      dueDate: { $lt: cutoff },
+    }).select('_id contractId').lean();
+
+    // Group by contract so several late installments share one transaction and two writes.
+    const byContract = new Map<string, { contractId: typeof feeDue[number]['contractId']; ids: typeof feeDue[number]['_id'][] }>();
     for (const installment of feeDue) {
-      await withTransaction(async () => {
-        const charged = await Installment.updateOne({ _id: installment._id, orgId: org._id, lateFee: 0 }, { $set: { lateFee: fee } });
-        if (charged.modifiedCount) await Contract.updateOne({ _id: installment.contractId, orgId: org._id }, { $inc: { lateFees: fee } });
+      const key = String(installment.contractId);
+      const group = byContract.get(key) ?? { contractId: installment.contractId, ids: [] };
+      group.ids.push(installment._id);
+      byContract.set(key, group);
+    }
+
+    for (const { contractId, ids } of byContract.values()) {
+      fees += await withTransaction(async () => {
+        // Recheck eligibility inside the transaction: repeat jobs and concurrent runs cannot charge twice.
+        const charged = await Installment.updateMany(
+          { orgId: org._id, contractId, _id: { $in: ids }, status: 'overdue', lateFee: 0, dueDate: { $lt: cutoff } },
+          { $set: { lateFee: fee } },
+        );
+        if (charged.modifiedCount) {
+          await Contract.updateOne(
+            { _id: contractId, orgId: org._id },
+            { $inc: { lateFees: charged.modifiedCount * fee } },
+          );
+        }
+        return charged.modifiedCount;
       });
-      fees += 1;
     }
   }
   logger.info('Overdue check done', { today, marked, fees });
