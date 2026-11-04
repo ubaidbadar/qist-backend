@@ -19,3 +19,50 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DB: shop
+
+  deploy:
+    name: Deploy Qist to Hostinger
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.QIST_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: qist-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Package release
+        run: |
+          bun install --frozen-lockfile --production
+          tar --exclude=.git --exclude=.github -czf "$RUNNER_TEMP/qist.tgz" .
+      - name: Upload and activate release
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST}" "${DEPLOY_USER:?Set DEPLOY_USER}"
+          : "${SSH_KEY:?Set DEPLOY_SSH_KEY}" "${KNOWN_HOSTS:?Set DEPLOY_KNOWN_HOSTS}"
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf "$ssh_dir"' EXIT
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$SSH_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$ssh_dir/known_hosts" -o IdentitiesOnly=yes -i "$ssh_dir/key")
+          release="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          target="$DEPLOY_USER@$DEPLOY_HOST"
+          scp "${ssh_options[@]}" "$RUNNER_TEMP/qist.tgz" "$target:/srv/qist/releases/$release.tgz"
+          ssh "${ssh_options[@]}" "$target" sudo -n /usr/local/sbin/qist-deploy "$release"
+      - name: Verify public health
+        run: curl --fail --silent --show-error --retry 5 --max-time 10 https://qist.restora.live/health
