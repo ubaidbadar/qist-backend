@@ -57,9 +57,9 @@ describe.skipIf(!hasDatabase)('model rules', () => {
     expect(await indexNames(Customer)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_cnic_1']);
     expect(await indexNames(Payment)).toEqual(['_id_', 'orgId_1_contractId_1', 'orgId_1_idempotencyKey_1', 'orgId_1_receivedOn_1_branchId_1']);
     expect(await indexNames(Counter)).toEqual(['_id_', 'orgId_1_branchId_1_name_1']);
-    expect(await indexNames(Contract)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_branchId_1__id_-1', 'orgId_1_customerId_1']);
-    expect(await indexNames(Installment)).toEqual(['_id_', 'orgId_1_contractId_1_number_1', 'orgId_1_status_1_dueDate_1']);
-    expect(await indexNames(DeviceCommand)).toEqual(['_id_', 'orgId_1_contractId_1__id_-1', 'orgId_1_deviceId_1', 'orgId_1_status_1__id_-1']);
+    expect(await indexNames(Contract)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_branchId_1__id_-1', 'orgId_1_customerId_1', 'orgId_1_deviceId_1_status_1__id_-1']);
+    expect(await indexNames(Installment)).toEqual(['_id_', 'orgId_1_branchId_1_status_1_dueDate_1', 'orgId_1_contractId_1_number_1', 'orgId_1_status_1_dueDate_1']);
+    expect(await indexNames(DeviceCommand)).toEqual(['_id_', 'orgId_1_contractId_1__id_-1', 'orgId_1_deviceId_1', 'orgId_1_deviceId_1_status_1__id_1', 'orgId_1_status_1__id_-1']);
     expect(await indexNames(InstallmentPlan)).toEqual(['_id_', 'orgId_1']);
     expect(await indexNames(Device)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_branchId_1__id_-1', 'orgId_1_imeis_1']);
 
