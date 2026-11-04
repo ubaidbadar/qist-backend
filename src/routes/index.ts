@@ -3,6 +3,7 @@ import { authRoutes } from './auth';
 import { branchRoutes } from './branches';
 import { commandRoutes, lockRoutes } from './commands';
 import { deviceApiRoutes } from './device';
+import { dashboardRoutes } from './dashboard';
 import { internalRoutes } from './internal';
 import { contractRoutes } from './contracts';
 import { customerRoutes } from './customers';
@@ -22,6 +23,7 @@ export const apiRoutes = createRouter()
   .route('/users', userRoutes)
   .route('/customers', customerRoutes)
   .route('/devices', deviceRoutes)
+  .route('/dashboard', dashboardRoutes)
   .route('/plans', planRoutes)
   .route('/contracts', contractRoutes)
   .route('/payments', paymentRoutes)
