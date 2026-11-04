@@ -106,7 +106,7 @@ async function loadContract(auth: AuthUser, id: string | undefined) {
         from: 'devices',
         let: { deviceId: '$deviceId', orgId: '$orgId' },
         pipeline: [
-          { $match: { $expr: { $and: [{ $eq: ['$_id', '$deviceId'] }, { $eq: ['$orgId', '$orgId'] }] } } },
+          { $match: { $expr: { $and: [{ $eq: ['$_id', '$$deviceId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
           { $project: { lockState: 1 } },
         ],
         as: 'matchedDevice',
