@@ -63,6 +63,6 @@ jobs:
           release="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           target="$DEPLOY_USER@$DEPLOY_HOST"
           scp "${ssh_options[@]}" "$RUNNER_TEMP/qist.tgz" "$target:/srv/qist/releases/$release.tgz"
-          ssh "${ssh_options[@]}" "$target" qist-deploy "$release"
+          ssh "${ssh_options[@]}" "$target" sudo -n /usr/local/sbin/qist-deploy "$release"
       - name: Verify public health
         run: curl --fail --silent --show-error --retry 5 --max-time 10 https://qist.restora.live/health
