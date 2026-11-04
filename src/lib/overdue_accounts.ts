@@ -35,7 +35,7 @@ export interface OverdueRow {
  * schedule/command/device lookups. Every lookup is explicitly tenant scoped.
  */
 /** Shared overdue pipeline, reused by Lock Center and the single-request dashboard. */
-export function overdueAccountPipeline(auth: AuthUser, today: string, branchId?: string): PipelineStage[] {
+export function overdueAccountPipeline(auth: AuthUser, today: string, branchId?: string): Exclude<PipelineStage, PipelineStage.Merge | PipelineStage.Out>[] {
   const scope = { ...scopeFilter(auth), ...(branchId ? { branchId: new Types.ObjectId(branchId) } : {}) };
   return [
     { $match: { ...scope, status: { $in: ['pending', 'partial', 'overdue'] }, dueDate: { $lt: today } } },
