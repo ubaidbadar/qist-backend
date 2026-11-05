@@ -17,6 +17,7 @@ const schema = new Schema({
   reset: { type: resetSchema, default: null, select: false },
   resetWindowStart: { type: Date, default: null, select: false },
   resetSentCount: { type: Number, default: 0, select: false },
+  lastResetSentAt: { type: Date, default: null, select: false },
 }, { collection: 'customer_accounts', timestamps: true, versionKey: false });
 
 schema.set('toJSON', { transform: (_doc, { _id, phone }) => ({ _id, phone }) });

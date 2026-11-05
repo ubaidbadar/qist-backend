@@ -39,7 +39,7 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
       { $lookup: { from: 'orgs', localField: 'orgId', foreignField: '_id', pipeline: [{ $match: { status: 'active' } }, { $project: { name: 1 } }], as: 'org' } },
       { $unwind: '$org' },
       { $lookup: { from: 'contracts', let: { customer: '$_id', org: '$orgId' }, pipeline: [
-        { $match: { $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
+        { $match: { ...(paymentsOnly && contractId ? { _id: new Types.ObjectId(contractId) } : {}), $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
         { $sort: { _id: -1 } },
         { $project: { orgId: 1, customerId: 1, deviceId: 1, branchId: 1, deviceLabel: 1, status: 1, downPayment: 1, totalPayable: 1, paidTotal: 1, lateFees: 1, count: 1, frequency: 1 } },
       ], as: 'contracts' } },
@@ -50,7 +50,9 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
     { $lookup: { from: 'payments', let: { contract: '$selected._id', org: '$selected.orgId', customer: '$selected.customerId' }, pipeline: [
       { $match: { voidedAt: null, ...(cursor ? { _id: { $lt: new Types.ObjectId(cursor) } } : {}), $expr: { $and: [{ $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }, { $eq: ['$customerId', '$$customer'] }] } } },
       { $sort: { _id: -1 } }, { $limit: PAGE_SIZE + 1 },
-      { $project: { receiptNumber: 1, amount: 1, method: 1, receivedOn: 1, receivedByName: 1, kind: 1, reference: 1, allocations: { number: 1, amount: 1 } } },
+      { $project: { receiptNumber: 1, amount: 1, method: 1, receivedOn: 1, receivedByName: 1, kind: 1, reference: 1,
+        allocations: { $map: { input: '$allocations', as: 'allocation', in: { number: '$$allocation.number', amount: '$$allocation.amount' } } },
+      } },
     ], as: 'payments' } },
   ];
   if (!paymentsOnly) pipeline.push(
@@ -69,7 +71,10 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
   );
   pipeline.push({ $project: {
     _id: 0, phone: 1, contracts: 1, selected: { $ifNull: ['$selected', null] }, payments: 1,
-    name: { $ifNull: [{ $arrayElemAt: ['$customers.fullName', 0] }, '$phone'] },
+    name: { $let: {
+      vars: { owner: { $arrayElemAt: [{ $filter: { input: '$customers', as: 'customer', cond: { $eq: ['$$customer._id', '$selected.customerId'] } } }, 0] } },
+      in: { $ifNull: ['$$owner.fullName', { $ifNull: [{ $arrayElemAt: ['$customers.fullName', 0] }, '$phone'] }] },
+    } },
     ...(paymentsOnly ? {} : { installments: 1, branch: { $arrayElemAt: ['$branch', 0] }, device: { $arrayElemAt: ['$device', 0] } }),
   } });
   return pipeline;

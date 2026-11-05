@@ -42,6 +42,7 @@ const paymentSchema = new Schema(
 );
 
 paymentSchema.index({ orgId: 1, contractId: 1 }); // a contract's ledger
+paymentSchema.index({ orgId: 1, customerId: 1, contractId: 1, _id: -1 }); // customer-app cursor pages
 paymentSchema.index({ orgId: 1, receivedOn: 1, branchId: 1 }); // a day's collections, one branch or all
 paymentSchema.index({ orgId: 1, idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } });
 

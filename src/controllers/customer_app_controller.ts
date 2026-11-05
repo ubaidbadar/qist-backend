@@ -55,10 +55,11 @@ export const requestReset = publicController.createHandlers(validate('json', cus
   try {
     // The unique phone index turns simultaneous requests/cooldown races into one successful sender.
     await CustomerAccount.findOneAndUpdate({ phone, $and: [
-      { $or: [{ 'reset.sentAt': { $lte: new Date(now.getTime() - 60_000) } }, { 'reset.sentAt': { $exists: false } }] },
+      { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
       { $or: [{ resetWindowStart: { $lte: hourAgo } }, { resetWindowStart: null }, { resetSentCount: { $lt: 5 } }] },
     ] }, [{ $set: {
       phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt: new Date(now.getTime() + RESET_TTL), attempts: 0 } },
+      lastResetSentAt: now,
       resetWindowStart: { $cond: [expiredWindow, now, '$resetWindowStart'] },
       resetSentCount: { $cond: [expiredWindow, 1, { $add: [{ $ifNull: ['$resetSentCount', 0] }, 1] }] },
       tokenVersion: { $ifNull: ['$tokenVersion', 0] }, sessions: { $ifNull: ['$sessions', []] },

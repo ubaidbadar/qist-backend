@@ -89,7 +89,7 @@ describe.skipIf(!hasDatabase)('customer app', () => {
   });
   test('a reset is single-use, signs out old sessions, and the old password stops working', async () => {
     const { phone } = await buyer(); const token = await activate(phone);
-    await CustomerAccount.updateOne({ phone }, { $unset: { reset: 1 }, $set: { resetWindowStart: new Date(0) } });
+    await CustomerAccount.updateOne({ phone }, { $unset: { reset: 1 }, $set: { resetWindowStart: new Date(0), lastResetSentAt: new Date(0) } });
     const code = await codeFor(phone); const body = { phone, code, password: 'a-new-safe-password' };
     expect((await call('POST', '/customer-app/auth/reset-password', { body })).status).toBe(200);
     expect((await call('POST', '/customer-app/auth/reset-password', { body })).status).toBe(400);
@@ -116,6 +116,15 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     const a = (await login()).data.accessToken; const b = (await login()).data.accessToken;
     expect((await call('POST', '/customer-app/auth/logout', { token: a })).status).toBe(200);
     expect((await overview(a)).status).toBe(401); expect((await overview(b)).status).toBe(200);
+  });
+  test('the hourly WhatsApp send cap survives code replacement', async () => {
+    const { phone } = await buyer();
+    const count = whatsappTestOutbox.length;
+    for (let i = 0; i < 6; i++) {
+      await CustomerAccount.updateOne({ phone }, { $set: { lastResetSentAt: new Date(0) } });
+      expect((await call('POST', '/customer-app/auth/forgot-password', { body: { phone } })).status).toBe(200);
+    }
+    expect(whatsappTestOutbox.length - count).toBe(5);
   });
   test('payments are paginated once, without voided records or duplicate rows', async () => {
     const { phone, contract, shop, customer } = await buyer(); const token = await activate(phone);
