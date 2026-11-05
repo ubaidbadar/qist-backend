@@ -1,5 +1,5 @@
 import { createFactory } from 'hono/factory';
-import type { AppEnv, AuthEnv, DeviceEnv } from './hono';
+import type { AppEnv, AuthEnv, DeviceEnv, CustomerAppEnv } from './hono';
 
 /**
  * Controller actions are built with these, so an action can include its own validation and still get typed
@@ -8,3 +8,4 @@ import type { AppEnv, AuthEnv, DeviceEnv } from './hono';
 export const publicController = createFactory<AppEnv>();
 export const authedController = createFactory<AuthEnv>();
 export const deviceController = createFactory<DeviceEnv>();
+export const customerAppController = createFactory<CustomerAppEnv>();

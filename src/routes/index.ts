@@ -7,6 +7,7 @@ import { dashboardRoutes } from './dashboard';
 import { internalRoutes } from './internal';
 import { contractRoutes } from './contracts';
 import { customerRoutes } from './customers';
+import { customerAppRoutes } from './customer_app';
 import { deviceRoutes } from './devices';
 import { meRoutes } from './me';
 import { orgRoutes } from './org';
@@ -22,6 +23,7 @@ export const apiRoutes = createRouter()
   .route('/branches', branchRoutes)
   .route('/users', userRoutes)
   .route('/customers', customerRoutes)
+  .route('/customer-app', customerAppRoutes)
   .route('/devices', deviceRoutes)
   .route('/dashboard', dashboardRoutes)
   .route('/plans', planRoutes)
