@@ -54,7 +54,7 @@ describe.skipIf(!hasDatabase)('model rules', () => {
     expect(await indexNames(RefreshToken)).toEqual(['_id_', 'expiresAt_1', 'userId_1']);
     expect(await indexNames(EmailToken)).toEqual(['_id_', 'expiresAt_1']);
     expect(await indexNames(AuditLog)).toEqual(['_id_']);
-    expect(await indexNames(Customer)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_cnic_1']);
+    expect(await indexNames(Customer)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_cnic_1', 'phone_1_orgId_1']);
     expect(await indexNames(Payment)).toEqual(['_id_', 'orgId_1_contractId_1', 'orgId_1_idempotencyKey_1', 'orgId_1_receivedOn_1_branchId_1']);
     expect(await indexNames(Counter)).toEqual(['_id_', 'orgId_1_branchId_1_name_1']);
     expect(await indexNames(Contract)).toEqual(['_id_', 'orgId_1__id_-1', 'orgId_1_branchId_1__id_-1', 'orgId_1_customerId_1', 'orgId_1_deviceId_1_status_1__id_-1']);

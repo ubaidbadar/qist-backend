@@ -32,6 +32,7 @@ const customerSchema = new Schema(
 );
 
 customerSchema.index({ orgId: 1, cnic: 1 }, { unique: true }); // no duplicate customers; CNIC search
+customerSchema.index({ phone: 1, orgId: 1 }); // verified customer-app identity across its retailers
 customerSchema.index({ orgId: 1, _id: -1 }); // newest-first pages; name and mobile search within the retailer
 
 /** `.populate({ path: 'homeBranch', ... })` adds `{ _id, name }` of the home branch. */

@@ -31,6 +31,12 @@ const envSchema = z
     SMTP_PASS: optionalText,
     /** Sender for emails, e.g. `Qist <no-reply@example.com>`; the address must be verified with the SMTP provider. */
     SMTP_FROM: optionalText,
+    /** Optional until customer WhatsApp verification is enabled. Never used by staff auth. */
+    WHATSAPP_ACCESS_TOKEN: optionalText,
+    WHATSAPP_PHONE_NUMBER_ID: z.preprocess((value) => value === '' ? undefined : value, z.string().regex(/^\d+$/).optional()),
+    WHATSAPP_AUTH_TEMPLATE: optionalText,
+    WHATSAPP_TEMPLATE_LANGUAGE: z.string().default('en_US'),
+    WHATSAPP_GRAPH_VERSION: z.preprocess((value) => value === '' ? undefined : value, z.string().regex(/^v\d+\.0$/).optional()),
     /** Where phones download the device app during QR setup (https, ours). Needed to issue an enrolment QR. */
     DEVICE_APP_APK_URL: z.preprocess((value) => (value === '' ? undefined : value), z.url().optional()),
     /** SHA-256 of the device app's signing certificate, URL-safe base64 without padding (43 characters). */
