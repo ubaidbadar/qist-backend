@@ -48,7 +48,7 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
     { $set: { contracts: { $reduce: { input: '$customers', initialValue: [], in: { $concatArrays: ['$$value', '$$this.contracts'] } } } } },
     { $set: { selected } },
     { $lookup: { from: 'payments', let: { contract: '$selected._id', org: '$selected.orgId', customer: '$selected.customerId' }, pipeline: [
-      { $match: { voidedAt: null, ...(cursor ? { _id: { $lt: new Types.ObjectId(cursor) } } : {}), $expr: { $and: [{ $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }, { $eq: ['$customerId', '$$customer'] }] } } },
+      { $match: { voidedAt: null, ...(cursor ? { _id: { $lt: new Types.ObjectId(cursor) } } : {}), $expr: { $and: [{ $ne: ['$$contract', null] }, { $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }, { $eq: ['$customerId', '$$customer'] }] } } },
       { $sort: { _id: -1 } }, { $limit: PAGE_SIZE + 1 },
       { $project: { receiptNumber: 1, amount: 1, method: 1, receivedOn: 1, receivedByName: 1, kind: 1, reference: 1,
         allocations: { $map: { input: '$allocations', as: 'allocation', in: { number: '$$allocation.number', amount: '$$allocation.amount' } } },
@@ -57,7 +57,7 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
   ];
   if (!paymentsOnly) pipeline.push(
     { $lookup: { from: 'installments', let: { contract: '$selected._id', org: '$selected.orgId' }, pipeline: [
-      { $match: { $expr: { $and: [{ $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }] } } },
+      { $match: { $expr: { $and: [{ $ne: ['$$contract', null] }, { $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }] } } },
       { $sort: { number: 1 } }, { $project: { _id: 0, number: 1, dueDate: 1, amount: 1, lateFee: 1, paidAmount: 1, status: 1 } },
     ], as: 'installments' } },
     { $lookup: { from: 'devices', let: { device: '$selected.deviceId', org: '$selected.orgId' }, pipeline: [
