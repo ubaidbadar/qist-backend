@@ -1,4 +1,4 @@
-import type { CustomerAppContractChoice, CustomerAppInstallment, CustomerAppOverview, CustomerAppPayment, Page } from '@shop/shared';
+import type { CustomerAppContractChoice, CustomerAppInstallment, CustomerAppOverview, CustomerAppPayment, Page, RetailerPaymentMethod } from '@shop/shared';
 import { todayInShops } from '@shop/shared';
 import { Types, type PipelineStage } from 'mongoose';
 import { CustomerAccount } from '../models/customer_account';
@@ -8,6 +8,7 @@ import { NotFoundError, UnauthorizedError } from './errors';
 const PAGE_SIZE = 20;
 interface ContractRow extends Omit<CustomerAppContractChoice, 'id'> {
   _id: Types.ObjectId; orgId: Types.ObjectId; customerId: Types.ObjectId; deviceId: Types.ObjectId; branchId: Types.ObjectId;
+  paymentMethods?: RetailerPaymentMethod[];
   downPayment: number; totalPayable: number; paidTotal: number; lateFees: number; count: number; frequency: 'weekly' | 'biweekly' | 'monthly';
 }
 interface ReadRow {
@@ -36,14 +37,14 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
     { $match: { _id: new Types.ObjectId(claims.sub), tokenVersion: claims.ver, sessions: { $elemMatch: { id: claims.sid, expiresAt: { $gt: new Date() } } } } },
     { $lookup: { from: 'customers', let: { phone: '$phone' }, pipeline: [
       { $match: { $expr: { $eq: ['$phone', '$$phone'] } } },
-      { $lookup: { from: 'orgs', localField: 'orgId', foreignField: '_id', pipeline: [{ $match: { status: 'active' } }, { $project: { name: 1 } }], as: 'org' } },
+      { $lookup: { from: 'orgs', localField: 'orgId', foreignField: '_id', pipeline: [{ $match: { status: 'active' } }, { $project: { name: 1, paymentMethods: 1 } }], as: 'org' } },
       { $unwind: '$org' },
       { $lookup: { from: 'contracts', let: { customer: '$_id', org: '$orgId' }, pipeline: [
         { $match: { ...(paymentsOnly && contractId ? { _id: new Types.ObjectId(contractId) } : {}), $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
         { $sort: { _id: -1 } },
         { $project: { orgId: 1, customerId: 1, deviceId: 1, branchId: 1, deviceLabel: 1, status: 1, downPayment: 1, totalPayable: 1, paidTotal: 1, lateFees: 1, count: 1, frequency: 1 } },
       ], as: 'contracts' } },
-      { $project: { fullName: 1, contracts: { $map: { input: '$contracts', as: 'contract', in: { $mergeObjects: ['$$contract', { retailer: '$org.name' }] } } } } },
+      { $project: { fullName: 1, contracts: { $map: { input: '$contracts', as: 'contract', in: { $mergeObjects: ['$$contract', { retailer: '$org.name', paymentMethods: { $filter: { input: { $ifNull: ['$org.paymentMethods', []] }, as: 'method', cond: { $eq: ['$$method.enabled', true] } } } }] } } } } },
     ], as: 'customers' } },
     { $set: { contracts: { $reduce: { input: '$customers', initialValue: [], in: { $concatArrays: ['$$value', '$$this.contracts'] } } } } },
     { $set: { selected } },
@@ -90,6 +91,7 @@ export async function loadCustomerOverview(claims: CustomerClaims, contractId?: 
     contract: selected ? {
       ...choice(selected), downPayment: selected.downPayment, totalPayable: selected.totalPayable, paidTotal: selected.paidTotal,
       lateFees: selected.lateFees, count: selected.count, frequency: selected.frequency,
+      paymentMethods: selected.paymentMethods ?? [],
       retailerPhone: row.branch?.phone ?? '', retailerAddress: row.branch?.address ?? '',
       deviceLockState: row.device?.lockState ?? null, installments: row.installments ?? [],
     } : null,

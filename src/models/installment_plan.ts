@@ -10,6 +10,7 @@ const installmentPlanSchema = new Schema(
     frequency: { type: String, enum: FREQUENCIES, required: true },
     count: { type: Number, required: true },
     markupPercent: { type: Number, required: true },
+    markupBasis: { type: String, enum: ['financed', 'cash_price'], default: 'financed' },
     minDownPaymentPercent: { type: Number, default: 0 },
     active: { type: Boolean, default: true },
   },

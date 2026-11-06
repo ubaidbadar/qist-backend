@@ -1,4 +1,4 @@
-import { orgUpdateSchema, policyUpdateSchema } from '@shop/shared';
+import { orgUpdateSchema, paymentSettingsSchema, policyUpdateSchema } from '@shop/shared';
 import { withTransaction } from '../db/transaction';
 import { recordAudit } from '../lib/audit';
 import { NotFoundError } from '../lib/errors';
@@ -37,6 +37,18 @@ export const updatePolicy = authedController.createHandlers(validate('json', pol
     const updated = await Org.findByIdAndUpdate(auth.orgId, { $set: changes }, { returnDocument: 'after' }).lean();
     if (!updated) throw new NotFoundError('Organization');
     await recordAudit(auth, { action: 'org.policy_updated', entity: 'org', entityId: auth.orgId, summary: 'Changed the lock and late-fee policy', metadata: { fields: Object.keys(changes) } });
+    return updated;
+  });
+  return c.json({ data: org });
+});
+
+/** PATCH /org/payment-methods: owner-managed instructions, not payment processing. */
+export const updatePaymentMethods = authedController.createHandlers(validate('json', paymentSettingsSchema), async (c) => {
+  const { auth } = c.var;
+  const org = await withTransaction(async () => {
+    const updated = await Org.findByIdAndUpdate(auth.orgId, { $set: c.req.valid('json') }, { returnDocument: 'after' }).lean();
+    if (!updated) throw new NotFoundError('Organization');
+    await recordAudit(auth, { action: 'org.updated', entity: 'org', entityId: auth.orgId, summary: 'Updated retailer payment instructions' });
     return updated;
   });
   return c.json({ data: org });

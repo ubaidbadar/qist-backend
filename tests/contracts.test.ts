@@ -58,6 +58,16 @@ describe.skipIf(!hasDatabase)('contracts', () => {
     expect((await sell(terms(device._id))).status).toBe(409);
   });
 
+  test('full-price markup is saved and its schedule matches server pricing', async () => {
+    const device = await addDevice(mainBranch);
+    const res = await sell(terms(device._id, { cashPrice: 5_000_000, downPayment: 1_000_000, markupPercent: 20, markupBasis: 'cash_price' }));
+    expect(res.status).toBe(201);
+    expect(res.data).toMatchObject({ markupBasis: 'cash_price', financedAmount: 4_000_000, markupAmount: 1_000_000, totalPayable: 5_000_000 });
+    expect(res.data.installments.reduce((sum, row) => sum + row.amount, 0)).toBe(5_000_000);
+    const saved = await call<ContractWithSchedule>('GET', `/contracts/${res.data._id}`, { token: shop.token });
+    expect(saved.data.markupBasis).toBe('cash_price');
+  });
+
   test('bad terms are refused', async () => {
     const device = await addDevice(mainBranch);
     expect((await sell(terms(device._id, { downPayment: 6_000_000 }))).status).toBe(400);

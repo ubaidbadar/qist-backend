@@ -1,4 +1,4 @@
-import { formatRupees, overdueAmount, todayInShops, type DueInstallment, type LockScreen } from '@shop/shared';
+import { formatRupees, overdueAmount, todayInShops, type DueInstallment, type LockScreen, type RetailerPaymentMethod } from '@shop/shared';
 import type { Types } from 'mongoose';
 import { Contract } from '../models/contract';
 
@@ -12,7 +12,8 @@ interface LockScreenContract {
   customerName: string;
   deviceLabel: string;
   installments: DueInstallment[];
-  branch: { name: string; phone: string } | null;
+  branch: { name: string; phone: string; address: string } | null;
+  retailer: { name: string; paymentMethods?: RetailerPaymentMethod[] } | null;
 }
 
 /** The earliest installment that still owes money, or null when the schedule is clear. */
@@ -49,13 +50,24 @@ export async function lockScreenFor({ orgId, deviceId, lockState }: DeviceRef): 
         let: { branchId: '$branchId' },
         pipeline: [
           { $match: { orgId, $expr: { $eq: ['$_id', '$$branchId'] } } },
-          { $project: { name: 1, phone: 1 } },
+          { $project: { name: 1, phone: 1, address: 1 } },
         ],
         as: 'branches',
       },
     },
     {
+      $lookup: {
+        from: 'orgs',
+        pipeline: [
+          { $match: { _id: orgId, status: 'active' } },
+          { $project: { name: 1, paymentMethods: { $filter: { input: { $ifNull: ['$paymentMethods', []] }, as: 'method', cond: { $eq: ['$$method.enabled', true] } } } } },
+        ],
+        as: 'retailers',
+      },
+    },
+    {
       $project: {
+        retailer: { $ifNull: [{ $arrayElemAt: ['$retailers', 0] }, null] },
         customerName: 1,
         deviceLabel: 1,
         installments: 1,
@@ -64,7 +76,7 @@ export async function lockScreenFor({ orgId, deviceId, lockState }: DeviceRef): 
     },
   ]);
   if (!contract) {
-    return { locked: lockState === 'locked', customerName: '', deviceLabel: '', amountDue: 0, nextDueDate: null, branchName: '', branchPhone: '', message: '' };
+    return { locked: lockState === 'locked', customerName: '', deviceLabel: '', amountDue: 0, nextDueDate: null, branchName: '', branchPhone: '', retailerName: '', branchAddress: '', paymentMethods: [], message: '' };
   }
 
   const amountDue = overdueAmount(contract.installments, todayInShops());
@@ -83,6 +95,9 @@ export async function lockScreenFor({ orgId, deviceId, lockState }: DeviceRef): 
     nextDueDate: nextUnpaid(contract.installments),
     branchName,
     branchPhone,
+    retailerName: contract.retailer?.name ?? branchName,
+    branchAddress: contract.branch?.address ?? '',
+    paymentMethods: contract.retailer?.paymentMethods ?? [],
     message,
   };
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RetailerPaymentMethod } from './org';
 import type { CommandType, DeviceLockState } from './constants';
 
 /** A freshly issued enrolment QR is only valid this long; the phone must be provisioned at the counter. */
@@ -54,6 +55,9 @@ export interface LockScreen {
   nextDueDate: string | null;
   branchName: string;
   branchPhone: string;
+  retailerName?: string;
+  branchAddress?: string;
+  paymentMethods?: RetailerPaymentMethod[];
   message: string;
 }
 
