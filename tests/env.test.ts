@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseEnv } from '../src/config/env';
+import { VALID_RELEASE } from './customer_install_fixture';
 
 const VALID = {
   MONGODB_URI: 'mongodb+srv://user:pass@cluster0.example.mongodb.net',
@@ -11,6 +12,12 @@ const VALID = {
 };
 
 describe('parseEnv', () => {
+  test('customer APK configuration is optional, validated and independent of enrollment', () => {
+    expect(parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: '' }).CUSTOMER_APP_RELEASE_JSON).toBeUndefined();
+    expect(parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: JSON.stringify(VALID_RELEASE) }).CUSTOMER_APP_RELEASE_JSON?.wifiOnly).toBe(true);
+    expect(() => parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: '{broken' })).toThrow('CUSTOMER_APP_RELEASE_JSON');
+    expect(() => parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: '{}' })).toThrow('CUSTOMER_APP_RELEASE_JSON');
+  });
   test('accepts a complete development env and applies defaults', () => {
     const env = parseEnv(VALID);
     expect(env.PORT).toBe(5001);

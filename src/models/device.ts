@@ -41,6 +41,15 @@ const deviceSchema = new Schema(
           pushToken: { type: String, default: '' },
           appVersion: { type: String, default: '' },
           platform: { type: String, default: 'android' },
+          customerApp: {
+            type: new Schema({
+              status: { type: String, enum: ['pending', 'downloading', 'installing', 'installed', 'failed', 'needs_attention', 'not_configured'], required: true },
+              versionCode: { type: Number },
+              detailCode: { type: String },
+              reportedAt: { type: Date, required: true },
+            }, { _id: false }),
+            default: undefined,
+          },
         },
         { _id: false },
       ),
