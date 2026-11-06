@@ -466,3 +466,10 @@ running that job. A wrong secret answers 401, an unknown name 404.
 
 `GET /health` (public, outside `/api/v1`): `{ "data": { "status": "ok", "db": "up" } }` with 200, or
 `{ "status": "degraded", "db": "down" }` with 503 when the database is unreachable.
+# Deferred customer application
+
+`POST /api/v1/device/checkin` optionally accepts `customerApp` with a validated `status`, optional installed `versionCode`, and bounded `detailCode`. It stores the report under `enrollment.customerApp`, with a server-generated `reportedAt`. Existing device authentication and retailer/branch permissions apply unchanged. Omitting the report preserves older locker compatibility.
+
+The response adds `customerAppRelease`, derived from optional `CUSTOMER_APP_RELEASE_JSON`, or `null` when disabled. It contains package name, version code, minimum SDK, immutable HTTPS APK URL, size, whole-file SHA-256, signing-certificate SHA-256 and `wifiOnly` (default true). No new network request or enrollment prerequisite is introduced. Generate this JSON with `scripts/customer_release.py` in the locker repository from a real signature-verified universal APK. Do not use an upload-key APK when Play uses a different app-signing key.
+
+Deploy the backend first with this setting empty; deploy the updated locker and portal; pilot the approved release before enabling metadata in production. QR downloads still contain only the locker. A customer-app failure must never be interpreted as failed enrollment or trigger a lock command. `installed` is the locker's last verified observation, with its timestamp, not a guarantee that a device is currently online.

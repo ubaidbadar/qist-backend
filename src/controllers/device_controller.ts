@@ -8,6 +8,7 @@ import {
   type PendingCommand,
 } from '@shop/shared';
 import { withTransaction } from '../db/transaction';
+import { env } from '../config/env';
 import { acrossTenants } from '../db/tenant_guard';
 import { recordSystemAudit } from '../lib/audit';
 import { deviceController, publicController } from '../lib/factory';
@@ -59,11 +60,12 @@ export const enroll = publicController.createHandlers(validate('json', deviceEnr
 /** POST /device/checkin — the phone reports in, collects pending commands (marked delivered) and the lock screen. */
 export const checkin = deviceController.createHandlers(validate('json', deviceCheckinSchema), async (c) => {
   const { device } = c.var;
-  const { pushToken, appVersion } = c.req.valid('json');
+  const { pushToken, appVersion, customerApp } = c.req.valid('json');
 
   const set: Record<string, unknown> = { 'enrollment.lastCheckInAt': new Date() };
   if (pushToken !== undefined) set['enrollment.pushToken'] = pushToken;
   if (appVersion !== undefined) set['enrollment.appVersion'] = appVersion;
+  if (customerApp !== undefined) set['enrollment.customerApp'] = { ...customerApp, reportedAt: new Date() };
 
   const payload = await withTransaction(async () => {
     // Return the updated lock state with the check-in write; no second device read.
@@ -82,7 +84,7 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
       .lean();
     const commands: PendingCommand[] = open.map((cmd) => ({ _id: String(cmd._id), type: cmd.type }));
     const lockScreen = await lockScreenFor({ orgId: device.orgId, deviceId: device._id, lockState: current?.lockState ?? 'unlocked' });
-    return { lockState: current?.lockState ?? 'unlocked', lockScreen, commands, checkInSeconds: DEVICE_CHECKIN_SECONDS } satisfies DeviceCheckin;
+    return { lockState: current?.lockState ?? 'unlocked', lockScreen, commands, checkInSeconds: DEVICE_CHECKIN_SECONDS, customerAppRelease: env.CUSTOMER_APP_RELEASE_JSON ?? null } satisfies DeviceCheckin;
   });
 
   return c.json({ data: payload });

@@ -7,6 +7,7 @@ export * from './commands';
 export * from './contracts';
 export * from './customers';
 export * from './customer_app';
+export * from './customer_install';
 export * from './dashboard';
 export * from './dates';
 export * from './device_api';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { customerAppReleaseSchema } from '../../shared/src/customer_install';
 
 const secret = z.string().min(32, 'must be at least 32 characters');
 /** Unset and empty (`KEY=` in .env) both mean "not configured". */
@@ -39,6 +40,14 @@ const envSchema = z
     WHATSAPP_GRAPH_VERSION: z.preprocess((value) => value === '' ? undefined : value, z.string().regex(/^v\d+\.0$/).optional()),
     /** Where phones download the device app during QR setup (https, ours). Needed to issue an enrolment QR. */
     DEVICE_APP_APK_URL: z.preprocess((value) => (value === '' ? undefined : value), z.url().optional()),
+    /** Empty disables deferred installation without affecting enrollment or existing device check-ins. */
+    CUSTOMER_APP_RELEASE_JSON: z.preprocess((value) => value === '' ? undefined : value,
+      z.string().transform((value, ctx) => {
+        try { return JSON.parse(value) as unknown; } catch {
+          ctx.addIssue({ code: 'custom', message: 'must be valid release JSON' });
+          return z.NEVER;
+        }
+      }).pipe(customerAppReleaseSchema).optional()),
     /** SHA-256 of the device app's signing certificate, URL-safe base64 without padding (43 characters). */
     DEVICE_APP_SIGNATURE_CHECKSUM: z.preprocess(
       (value) => (value === '' ? undefined : value),

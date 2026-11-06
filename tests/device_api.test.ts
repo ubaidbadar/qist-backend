@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { addDays, DEVICE_ADMIN_COMPONENT, todayInShops, type Contract, type ContractWithSchedule, type Customer, type DeviceCheckin, type DeviceCommand, type DeviceCredential, type Device as DeviceDoc, type EnrollmentTicket } from '@shop/shared';
 import { Types } from 'mongoose';
 import { Device } from '../src/models/device';
+import { env } from '../src/config/env';
+import { VALID_RELEASE } from './customer_install_fixture';
 import { call, newCustomer, prepareDatabase, randomImei, signupOrg } from './api';
 import { hasDatabase } from './setup';
 
@@ -100,6 +102,26 @@ describe.skipIf(!hasDatabase)('device API (Phase 2)', () => {
     expect(res.data.lockState).toBe('unlocked');
     expect(res.data.commands).toHaveLength(0);
     expect(res.data.lockScreen.branchName).toBeTruthy();
+  });
+
+  test('customer app reports do not hold up enrollment and are separate from lock state', async () => {
+    const previous = env.CUSTOMER_APP_RELEASE_JSON;
+    env.CUSTOMER_APP_RELEASE_JSON = { ...VALID_RELEASE, packageName: 'pk.qist.customer', wifiOnly: true };
+    try {
+      const phone = await enrolledPhone();
+      const result = await checkin(phone.token, { customerApp: { status: 'pending' } });
+      expect(result.status).toBe(200);
+      expect(result.data.lockState).toBe('unlocked');
+      expect(result.data.customerAppRelease?.wifiOnly).toBe(true);
+      const device = (await call<DeviceDoc>('GET', `/devices/${phone.deviceId}`, { token: shop.token })).data;
+      expect(device.enrollment?.customerApp?.status).toBe('pending');
+      expect(device.enrollment?.customerApp?.reportedAt).toBeTruthy();
+      expect((await checkin(phone.token, { customerApp: { status: 'invented' } })).status).toBe(400);
+      env.CUSTOMER_APP_RELEASE_JSON = undefined;
+      expect((await checkin(phone.token)).data.customerAppRelease).toBeNull();
+    } finally {
+      env.CUSTOMER_APP_RELEASE_JSON = previous;
+    }
   });
 
   test('a lock reaches the phone on check-in, which acknowledges it', async () => {
