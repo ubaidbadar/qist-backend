@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { objectIdSchema, passwordSchema } from './fields';
 import { mobileSchema } from './identifiers';
 import type { ContractStatus, Frequency, InstallmentStatus, PaymentMethod } from './constants';
+import type { RetailerPaymentMethod } from './org';
 import type { Page } from './api';
 
 export const customerLoginSchema = z.object({ phone: mobileSchema, password: passwordSchema });
@@ -23,6 +24,7 @@ export interface CustomerAppPayment {
 export interface CustomerAppContract extends CustomerAppContractChoice {
   downPayment: number; totalPayable: number; paidTotal: number; lateFees: number; count: number; frequency: Frequency;
   retailerPhone: string; retailerAddress: string; deviceLockState: 'locked' | 'unlocked' | null;
+  paymentMethods: RetailerPaymentMethod[];
   installments: CustomerAppInstallment[];
 }
 /** Money is integer paisa. Dates are Pakistan calendar dates, not device-local timestamps. */

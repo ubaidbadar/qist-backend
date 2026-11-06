@@ -6,6 +6,14 @@ const orgSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
     status: { type: String, enum: ORG_STATUSES, required: true, default: 'active' },
+    paymentMethods: { type: [new Schema({
+      id: { type: String, required: true },
+      kind: { type: String, enum: ['cash', 'easypaisa', 'jazzcash', 'bank'], required: true },
+      enabled: { type: Boolean, default: true },
+      accountTitle: String,
+      accountNumber: String,
+      bankName: String,
+    }, { _id: false })], default: [] },
     /** When phones are locked (docs/plan.md §5). Read through `policyOf`, which fills in defaults. */
     lockPolicy: {
       mode: { type: String, enum: LOCK_MODES, default: DEFAULT_LOCK_POLICY.mode },

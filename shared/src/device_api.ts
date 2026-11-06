@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RetailerPaymentMethod } from './org';
 import type { CommandType, DeviceLockState } from './constants';
 import { customerAppReportSchema, type CustomerAppRelease } from './customer_install';
 
@@ -56,6 +57,9 @@ export interface LockScreen {
   nextDueDate: string | null;
   branchName: string;
   branchPhone: string;
+  retailerName?: string;
+  branchAddress?: string;
+  paymentMethods?: RetailerPaymentMethod[];
   message: string;
 }
 

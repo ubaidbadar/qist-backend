@@ -95,6 +95,18 @@ describe.skipIf(!hasDatabase)('device API (Phase 2)', () => {
     expect((await checkin('not.a-real-token')).status).toBe(401);
   });
 
+  test('lock screens carry the current retailer accounts and branch address, excluding disabled methods', async () => {
+    const wallet = { id: crypto.randomUUID(), kind: 'easypaisa' as const, enabled: true, accountTitle: 'Shop Account', accountNumber: '03001234567' };
+    expect((await call('PATCH', '/org/payment-methods', { token: shop.token, body: { paymentMethods: [wallet, { id: crypto.randomUUID(), kind: 'cash', enabled: false }] } })).status).toBe(200);
+    await call('PATCH', `/branches/${branch}`, { token: shop.token, body: { address: 'Main Road' } });
+    const phone = await enrolledPhone();
+    const response = await checkin(phone.token);
+    expect(response.status).toBe(200);
+    expect(response.data.lockScreen.paymentMethods).toEqual([wallet]);
+    expect(response.data.lockScreen.branchAddress).toBe('Main Road');
+    expect(response.data.lockScreen.retailerName).toBe(shop.session.org.name);
+  });
+
   test('a fresh phone checks in with no commands and an unlocked screen', async () => {
     const phone = await enrolledPhone();
     const res = await checkin(phone.token, { appVersion: '1.0.0' });

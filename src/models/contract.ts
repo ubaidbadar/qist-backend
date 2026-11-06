@@ -20,6 +20,7 @@ const contractSchema = new Schema(
     cashPrice: { type: Number, required: true },
     downPayment: { type: Number, required: true },
     markupPercent: { type: Number, required: true },
+    markupBasis: { type: String, enum: ['financed', 'cash_price'], default: 'financed' },
     financedAmount: { type: Number, required: true },
     markupAmount: { type: Number, required: true },
     totalPayable: { type: Number, required: true },

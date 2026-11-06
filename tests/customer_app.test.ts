@@ -6,7 +6,7 @@ import { CustomerAccount } from '../src/models/customer_account';
 import { Org } from '../src/models/org';
 import { Payment } from '../src/models/payment';
 import { whatsappTestOutbox, whatsappCodeMessage } from '../src/lib/whatsapp';
-import { call, newCustomer, PASSWORD, prepareDatabase, randomImei, randomMobile, signupOrg } from './api';
+import { addMember, call, newCustomer, PASSWORD, prepareDatabase, randomImei, randomMobile, signupOrg } from './api';
 import { hasDatabase } from './setup';
 
 test('WhatsApp authentication message repeats the OTP in the body and copy-code URL button', () => {
@@ -62,6 +62,22 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     } finally { aggregate.mockRestore(); }
     const formatted = '+92 ' + phone.slice(1);
     expect((await call('POST', '/customer-app/auth/login', { body: { phone: formatted, password: PASSWORD } })).status).toBe(200);
+  });
+  test('only enabled instructions for the selected retailer reach the customer', async () => {
+    const a = await buyer(); const b = await buyer(a.phone); const token = await activate(a.phone);
+    const wallet = { id: crypto.randomUUID(), kind: 'jazzcash' as const, enabled: true, accountTitle: 'Retailer A', accountNumber: '03001234567' };
+    const hidden = { id: crypto.randomUUID(), kind: 'cash', enabled: false };
+    expect((await call('PATCH', '/org/payment-methods', { token: a.shop.token, body: { paymentMethods: [wallet, hidden] } })).status).toBe(200);
+    expect((await call('PATCH', '/org/payment-methods', { token: b.shop.token, body: { paymentMethods: [{ id: crypto.randomUUID(), kind: 'cash', enabled: true }] } })).status).toBe(200);
+    const staff = await addMember(a.shop.token, 'staff', [a.shop.session.branches[0]._id]);
+    expect((await call('PATCH', '/org/payment-methods', { token: staff.token, body: { paymentMethods: [] } })).status).toBe(403);
+    expect((await overview(token, `?contractId=${a.contract!._id}`)).data.contract?.paymentMethods).toEqual([wallet]);
+    const other = (await overview(token, `?contractId=${b.contract!._id}`)).data.contract?.paymentMethods;
+    expect(other).toHaveLength(1);
+    expect(other?.[0].kind).toBe('cash');
+    expect(JSON.stringify(other)).not.toContain('Retailer A');
+    expect((await call('PATCH', '/org/payment-methods', { token: a.shop.token, body: { paymentMethods: [] } })).status).toBe(200);
+    expect((await overview(token, `?contractId=${a.contract!._id}`)).data.contract?.paymentMethods).toEqual([]);
   });
   test('staff and customer tokens cannot cross authentication boundaries; unowned ids are refused', async () => {
     const a = await buyer(); const b = await buyer(); const token = await activate(a.phone);
