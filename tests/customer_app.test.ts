@@ -156,4 +156,64 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     expect(next.status).toBe(200); expect(next.data.items).toHaveLength(5); expect(next.data.nextCursor).toBeNull();
     expect(new Set([...first.items, ...next.data.items].map((item) => item.id)).size).toBe(25);
   });
+  test('phone-first login requires a plan and sends OTP only when no password exists', async () => {
+    const unknown = randomMobile();
+    expect((await call('POST', '/customer-app/auth/start', { body: { phone: unknown } })).data).toEqual({ next: 'unregistered' });
+    const noPlan = await buyer(randomMobile(), false);
+    expect((await call('POST', '/customer-app/auth/start', { body: { phone: noPlan.phone } })).data).toEqual({ next: 'unregistered' });
+    const { phone } = await buyer();
+    const before = whatsappTestOutbox.length;
+    const first = await call<{ next: string; retryAfterSeconds: number }>('POST', '/customer-app/auth/start', { body: { phone } });
+    expect(first.status).toBe(200); expect(first.data).toMatchObject({ next: 'otp', retryAfterSeconds: 60 });
+    expect(whatsappTestOutbox.length).toBe(before + 1);
+    expect((await call('POST', '/customer-app/auth/start', { body: { phone } })).status).toBe(200);
+    expect(whatsappTestOutbox.length).toBe(before + 1);
+    const code = whatsappTestOutbox.at(-1)!.code;
+    const proof = await call<{ setupToken: string }>('POST', '/customer-app/auth/verify-code', { body: { phone, code } });
+    expect(proof.status).toBe(200); expect(proof.data.setupToken).toHaveLength(43);
+    expect((await overview(proof.data.setupToken)).status).toBe(401);
+    expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code } })).status).toBe(400);
+    const session = await call<CustomerAppSession>('POST', '/customer-app/auth/set-password', { body: { phone, setupToken: proof.data.setupToken, password: PASSWORD } });
+    expect(session.status).toBe(200); expect((await overview(session.data.accessToken)).status).toBe(200);
+    expect((await call('POST', '/customer-app/auth/set-password', { body: { phone, setupToken: proof.data.setupToken, password: PASSWORD } })).status).toBe(400);
+    const sent = whatsappTestOutbox.length;
+    expect((await call('POST', '/customer-app/auth/start', { body: { phone } })).data).toEqual({ next: 'password' });
+    expect(whatsappTestOutbox.length).toBe(sent);
+    expect((await call('POST', '/customer-app/auth/login', { body: { phone, password: PASSWORD } })).status).toBe(200);
+  });
+  test('setup proof is phone bound, expires, and cannot survive a new challenge', async () => {
+    const { phone } = await buyer();
+    const code = await codeFor(phone);
+    const proof = (await call<{ setupToken: string }>('POST', '/customer-app/auth/verify-code', { body: { phone, code } })).data.setupToken;
+    expect((await call('POST', '/customer-app/auth/set-password', { body: { phone: randomMobile(), setupToken: proof, password: PASSWORD } })).status).toBe(400);
+    await CustomerAccount.updateOne({ phone }, { $set: { lastResetSentAt: new Date(0) } });
+    await codeFor(phone);
+    expect((await call('POST', '/customer-app/auth/set-password', { body: { phone, setupToken: proof, password: PASSWORD } })).status).toBe(400);
+    const nextCode = whatsappTestOutbox.at(-1)!.code;
+    const next = (await call<{ setupToken: string }>('POST', '/customer-app/auth/verify-code', { body: { phone, code: nextCode } })).data.setupToken;
+    await CustomerAccount.updateOne({ phone }, { $set: { 'setup.expiresAt': new Date(0) } });
+    expect((await call('POST', '/customer-app/auth/set-password', { body: { phone, setupToken: next, password: PASSWORD } })).status).toBe(400);
+  });
+  test('concurrent OTP verification and password creation each have only one winner', async () => {
+    const { phone } = await buyer(); const code = await codeFor(phone);
+    const attempts = await Promise.all([0, 1].map(() => call<{ setupToken: string }>('POST', '/customer-app/auth/verify-code', { body: { phone, code } })));
+    expect(attempts.map((r) => r.status).sort()).toEqual([200, 400]);
+    const setupToken = attempts.find((r) => r.status === 200)!.data.setupToken;
+    const saves = await Promise.all([0, 1].map(() => call<CustomerAppSession>('POST', '/customer-app/auth/set-password', { body: { phone, setupToken, password: PASSWORD } })));
+    expect(saves.map((r) => r.status).sort()).toEqual([200, 400]);
+  });
+  test('OTP verification shares the five-guess limit with legacy reset', async () => {
+    const { phone } = await buyer(); const code = await codeFor(phone);
+    const wrong = code === '000000' ? '111111' : '000000';
+    for (let i = 0; i < 5; i++) expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code: wrong } })).status).toBe(400);
+    expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code } })).status).toBe(400);
+  });
+  test('suspended retailers cannot trigger phone-first onboarding', async () => {
+    const { phone, shop } = await buyer();
+    await Org.updateOne({ _id: shop.session.org._id }, { $set: { status: 'suspended' } });
+    const before = whatsappTestOutbox.length;
+    expect((await call('POST', '/customer-app/auth/start', { body: { phone } })).data).toEqual({ next: 'unregistered' });
+    expect(whatsappTestOutbox.length).toBe(before);
+  });
+
 });
