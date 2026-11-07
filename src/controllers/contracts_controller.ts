@@ -1,5 +1,6 @@
+import { notifyCustomerChange } from '../lib/customer_notifications';
 import { buildSchedule, contractCancelSchema, contractCreateSchema, contractListQuerySchema, priceContract, todayInShops } from '@shop/shared';
-import type { Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { withTransaction } from '../db/transaction';
 import { recordAudit } from '../lib/audit';
 import { createPayment } from '../lib/payments';
@@ -208,6 +209,7 @@ export const create = authedController.createHandlers(validate('json', contractC
     });
     return created;
   });
+  await notifyCustomerChange(auth.orgId, contract.customerId, contract._id, 'plan_changed', `contract:${contract._id}:created`);
   return c.json({ data: await loadContract(auth, String(contract._id)) }, 201);
 });
 
@@ -235,5 +237,6 @@ export const cancel = authedController.createHandlers(validate('json', contractC
       summary: `Cancelled the sale of ${existing.deviceLabel} to ${existing.customerName}`,
     });
   });
+  await notifyCustomerChange(auth.orgId, new Types.ObjectId(existing.customerId), new Types.ObjectId(existing._id), 'plan_changed', `contract:${existing._id}:cancelled`);
   return c.json({ data: await loadContract(auth, String(existing._id)) });
 });

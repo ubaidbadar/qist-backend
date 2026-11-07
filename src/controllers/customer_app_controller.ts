@@ -1,15 +1,17 @@
-import { createHmac, randomInt, randomBytes, timingSafeEqual } from 'node:crypto';
-import { customerLoginSchema, customerOverviewQuerySchema, customerPaymentsQuerySchema, customerRecoverySchema, customerResetSchema, customerVerifyCodeSchema, customerSetPasswordSchema } from '@shop/shared';
+import { createHash, createHmac, randomInt, randomBytes, timingSafeEqual } from 'node:crypto';
+import { customerLoginSchema, customerOverviewQuerySchema, customerPaymentsQuerySchema, customerRecoverySchema, customerResetSchema, customerVerifyCodeSchema, customerSetPasswordSchema, customerPushSchema, customerReadNotificationsSchema } from '@shop/shared';
 import { mongo, Types } from 'mongoose';
 import { env } from '../config/env';
 import { loadCustomerOverview, loadCustomerPayments } from '../lib/customer_data';
 import { CUSTOMER_SESSION_MS, signCustomerToken } from '../lib/customer_session';
-import { UnauthorizedError, ValidationError, RateLimitError } from '../lib/errors';
+import { AppError, UnauthorizedError, ValidationError, RateLimitError } from '../lib/errors';
 import { customerAppController, publicController } from '../lib/factory';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../lib/passwords';
 import { validate } from '../lib/validate';
 import { requireWhatsApp, sendWhatsAppCode } from '../lib/whatsapp';
 import { Customer } from '../models/customer';
+import { CustomerNotification } from '../models/customer_notification';
+import { CustomerPushToken } from '../models/customer_push_token';
 import { CustomerAccount } from '../models/customer_account';
 
 const HOUR = 60 * 60 * 1000;
@@ -65,6 +67,7 @@ async function issueCode(phone: string, strict: boolean) {
   try {
     await CustomerAccount.findOneAndUpdate({ phone, $and: [
       { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
+      { $or: [{ 'reset.attempts': { $lt: 5 } }, { 'reset.expiresAt': { $lte: now } }, { reset: null }] },
       { $or: [{ resetWindowStart: { $lte: hourAgo } }, { resetWindowStart: null }, { resetSentCount: { $lt: 5 } }] },
     ] }, [{ $set: {
       phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt: new Date(now.getTime() + RESET_TTL), attempts: 0 } },
@@ -78,6 +81,7 @@ async function issueCode(phone: string, strict: boolean) {
     if (!(err instanceof mongo.MongoServerError && err.code === 11000)) throw err;
     if (!strict) return 60;
     const account = await CustomerAccount.findOne({ phone }).select('+reset +lastResetSentAt +resetWindowStart +resetSentCount').lean();
+    if (account?.reset && account.reset.expiresAt > now && account.reset.attempts >= 5) throw verificationLimit(account.reset.expiresAt, now);
     const cooldown = Math.max(1, Math.ceil(((account?.lastResetSentAt?.getTime() ?? now.getTime()) + 60_000 - now.getTime()) / 1000));
     const hourly = account && account.resetSentCount >= 5 && account.resetWindowStart
       ? Math.max(0, Math.ceil((account.resetWindowStart.getTime() + HOUR - now.getTime()) / 1000)) : 0;
@@ -116,19 +120,31 @@ export const requestReset = publicController.createHandlers(validate('json', cus
   return c.json({ data: genericRecovery });
 });
 
+function verificationLimit(expiresAt: Date, now: Date) {
+  const seconds = Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / 1000));
+  return new RateLimitError(seconds, 'OTP_ATTEMPTS_EXCEEDED', 'Too many verification attempts. Please wait before requesting a new code.');
+}
+
 export const verifyCode = publicController.createHandlers(validate('json', customerVerifyCodeSchema), async (c) => {
   c.header('Cache-Control', 'no-store');
   const { phone, code } = c.req.valid('json');
   const now = new Date();
-  const invalid = () => new ValidationError('The code is invalid or expired. Request a new WhatsApp code.');
+  const invalid = () => new AppError('OTP_CODE_EXPIRED', 400, 'The code has expired. Request a new WhatsApp code.');
   const account = await CustomerAccount.findOneAndUpdate(
     { phone, 'reset.expiresAt': { $gt: now }, 'reset.attempts': { $lt: 5 } },
     { $inc: { 'reset.attempts': 1 } }, { returnDocument: 'before' },
   ).select('+reset +tokenVersion').lean();
-  if (!account?.reset) throw invalid();
+  if (!account?.reset) {
+    const current = await CustomerAccount.findOne({ phone }).select('+reset').lean();
+    if (current?.reset && current.reset.expiresAt > now && current.reset.attempts >= 5) throw verificationLimit(current.reset.expiresAt, now);
+    throw invalid();
+  }
   const expected = Buffer.from(account.reset.digest, 'hex');
   const actual = Buffer.from(resetDigest(phone, code), 'hex');
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw invalid();
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    if (account.reset.attempts >= 4) throw verificationLimit(account.reset.expiresAt, now);
+    throw new AppError('OTP_CODE_INVALID', 400, 'That code is incorrect. Please try again.');
+  }
   const setupToken = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + RESET_TTL);
   const result = await CustomerAccount.updateOne(
@@ -192,6 +208,7 @@ export const payments = customerAppController.createHandlers(validate('query', c
 export const logout = customerAppController.createHandlers(async (c) => {
   const { sub, ver, sid } = c.var.customer;
   await CustomerAccount.updateOne({ _id: new Types.ObjectId(sub), tokenVersion: ver }, { $pull: { sessions: { id: sid } } });
+  await CustomerPushToken.deleteMany({ accountId: new Types.ObjectId(sub), sessionId: sid });
   return c.json({ data: { ok: true } });
 });
 
@@ -205,5 +222,34 @@ export const deleteAccount = customerAppController.createHandlers(async (c) => {
   });
   // A lost response can safely be retried with the same still-signed token; never remove a recreated identity.
   if (result.deletedCount === 0 && await CustomerAccount.exists({ _id: id })) throw new UnauthorizedError();
+  await Promise.all([CustomerPushToken.deleteMany({ accountId: id }), CustomerNotification.deleteMany({ accountId: id })]);
+  return c.json({ data: { ok: true } });
+});
+
+async function activeCustomer(claims: { sub: string; ver: number; sid: string }) {
+  const account = await CustomerAccount.findOne({ _id: new Types.ObjectId(claims.sub), tokenVersion: claims.ver,
+    sessions: { $elemMatch: { id: claims.sid, expiresAt: { $gt: new Date() } } } }).select('+sessions').lean();
+  if (!account) throw new UnauthorizedError();
+  return account;
+}
+export const registerPush = customerAppController.createHandlers(validate('json', customerPushSchema), async (c) => {
+  const account = await activeCustomer(c.var.customer);
+  const { token } = c.req.valid('json');
+  const hash = createHash('sha256').update(token).digest('hex');
+  await CustomerPushToken.deleteMany({ accountId: account._id, sessionId: c.var.customer.sid, _id: { $ne: hash } });
+  await CustomerPushToken.updateOne({ _id: hash }, { $set: {
+    accountId: account._id, sessionId: c.var.customer.sid, token,
+    expiresAt: account.sessions.find((s) => s.id === c.var.customer.sid)!.expiresAt,
+  } }, { upsert: true });
+  return c.json({ data: { ok: true } });
+});
+export const unregisterPush = customerAppController.createHandlers(async (c) => {
+  await activeCustomer(c.var.customer);
+  await CustomerPushToken.deleteMany({ accountId: new Types.ObjectId(c.var.customer.sub), sessionId: c.var.customer.sid });
+  return c.json({ data: { ok: true } });
+});
+export const readNotifications = customerAppController.createHandlers(validate('json', customerReadNotificationsSchema), async (c) => {
+  await activeCustomer(c.var.customer);
+  await CustomerNotification.updateMany({ accountId: new Types.ObjectId(c.var.customer.sub), _id: { $in: c.req.valid('json').ids.map((id) => new Types.ObjectId(id)) }, readAt: null }, { $set: { readAt: new Date() } });
   return c.json({ data: { ok: true } });
 });

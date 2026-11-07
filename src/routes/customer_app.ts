@@ -5,12 +5,13 @@ import { authenticateCustomer } from '../lib/customer_session';
 import { createRouter } from '../lib/hono';
 import { rateLimit } from '../middleware/rate_limit';
 
+const pushLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 60, enabled: env.NODE_ENV !== 'test' });
 const authLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, enabled: env.NODE_ENV !== 'test' });
 const recoveryLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, enabled: env.NODE_ENV !== 'test' });
 export const customerAppRoutes = createRouter()
   .get('/config', (c) => {
     c.header('Cache-Control', 'no-store');
-    return c.json({ data: { maintenance: env.CUSTOMER_APP_MAINTENANCE, minimumVersionCode: env.CUSTOMER_APP_MIN_VERSION_CODE } });
+    return c.json({ data: { maintenance: env.CUSTOMER_APP_MAINTENANCE } });
   })
   .use('*', async (c, next) => {
     // Account deletion remains available to an authenticated customer during app maintenance/upgrades.
@@ -18,9 +19,6 @@ export const customerAppRoutes = createRouter()
     if (env.CUSTOMER_APP_MAINTENANCE) throw new AppError('MAINTENANCE_MODE', 503, 'Qist is under maintenance. Please try again shortly.');
     const version = c.req.header('X-Customer-App-Version');
     if (version !== undefined && !/^\d{1,10}$/.test(version)) throw new AppError('VALIDATION_ERROR', 400, 'Invalid app version');
-    if (env.CUSTOMER_APP_MIN_VERSION_CODE > 0 && Number(version ?? 0) < env.CUSTOMER_APP_MIN_VERSION_CODE) {
-      throw new AppError('CLIENT_UPDATE_REQUIRED', 426, 'Please update Qist on Google Play to continue.');
-    }
     return next();
   })
   .post('/auth/start', authLimit, ...controller.start)
@@ -32,6 +30,9 @@ export const customerAppRoutes = createRouter()
   .post('/auth/reset-password', authLimit, ...controller.resetPassword)
   .use('*', authenticateCustomer)
   .delete('/account', authLimit, ...controller.deleteAccount)
+  .post('/push-token', pushLimit, ...controller.registerPush)
+  .delete('/push-token', ...controller.unregisterPush)
+  .post('/notifications/read', ...controller.readNotifications)
   .get('/overview', ...controller.overview)
   .get('/payments', ...controller.payments)
   .post('/auth/logout', ...controller.logout);

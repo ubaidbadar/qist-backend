@@ -11,6 +11,7 @@ import { afterPayment } from '../lib/locks';
 import { applyToInstallments, createPayment, planAllocations } from '../lib/payments';
 import { scopeFilter, usableBranch, worksAt } from '../lib/scope';
 import { validate } from '../lib/validate';
+import { notifyCustomerChange } from '../lib/customer_notifications';
 import { Contract } from '../models/contract';
 import { Device } from '../models/device';
 import { Payment } from '../models/payment';
@@ -63,6 +64,7 @@ export const record = authedController.createHandlers(validate('json', paymentCr
       });
       return created;
     });
+    await notifyCustomerChange(auth.orgId, payment.customerId, payment.contractId, 'payment', `payment:${payment._id}`);
     return c.json({ data: await findPayment(auth, payment._id) }, 201);
   } catch (err) {
     // Two identical requests at once: the unique key let one through; answer the other with the same payment.
@@ -154,5 +156,7 @@ export const voidPayment = authedController.createHandlers(validate('json', paym
       summary: `Voided receipt ${payment.receiptNumber} (${formatRupees(payment.amount)} from ${payment.customerName}): ${reason}`,
     });
   });
-  return c.json({ data: await findPayment(auth, paymentId) });
+  const updated = await findPayment(auth, paymentId);
+  if (updated) await notifyCustomerChange(auth.orgId, updated.customerId, updated.contractId, 'payment_voided', `void:${updated._id}`);
+  return c.json({ data: updated });
 });

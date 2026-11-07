@@ -9,7 +9,7 @@ export const customerLoginSchema = z.object({ phone: mobileSchema, password: pas
 export const customerRecoverySchema = z.object({ phone: mobileSchema });
 export const customerVerifyCodeSchema = customerRecoverySchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
 export const customerSetPasswordSchema = customerLoginSchema.extend({ setupToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Verify your WhatsApp code again') });
-export interface CustomerAppConfig { maintenance: boolean; minimumVersionCode: number }
+export interface CustomerAppConfig { maintenance: boolean }
 export interface CustomerAuthStart { next: 'password' | 'otp' | 'unregistered'; retryAfterSeconds?: number }
 export interface CustomerSetupProof { setupToken: string; expiresAt: string }
 export const customerResetSchema = customerLoginSchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
@@ -33,10 +33,15 @@ export interface CustomerAppContract extends CustomerAppContractChoice {
   installments: CustomerAppInstallment[];
 }
 /** Money is integer paisa. Dates are Pakistan calendar dates, not device-local timestamps. */
+export interface CustomerAppNotification { id: string; contractId: string; kind: string; title: string; body: string; createdAt: string; read: boolean }
 export interface CustomerAppOverview {
-  profile: { name: string; phone: string };
+  notifications: CustomerAppNotification[];
+  profile: { name: string; phone: string; retailer?: string; retailerPhone?: string };
   contracts: CustomerAppContractChoice[];
   contract: CustomerAppContract | null;
   payments: Page<CustomerAppPayment>;
   today: string;
 }
+
+export const customerPushSchema = z.object({ token: z.string().min(20).max(4096).regex(/^[A-Za-z0-9_:.-]+$/) });
+export const customerReadNotificationsSchema = z.object({ ids: z.array(objectIdSchema).min(1).max(30) });

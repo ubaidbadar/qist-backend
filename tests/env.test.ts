@@ -24,13 +24,6 @@ describe('parseEnv', () => {
     expect(env.NODE_ENV).toBe('development');
     expect(env.TRUST_PROXY).toBe(false);
     expect(env.CUSTOMER_APP_MAINTENANCE).toBe(false);
-    expect(env.CUSTOMER_APP_MIN_VERSION_CODE).toBe(0);
-  });
-
-  test('validates customer app controls', () => {
-    expect(parseEnv({ ...VALID, CUSTOMER_APP_MAINTENANCE: 'true', CUSTOMER_APP_MIN_VERSION_CODE: '100' }).CUSTOMER_APP_MIN_VERSION_CODE).toBe(100);
-    expect(() => parseEnv({ ...VALID, CUSTOMER_APP_MIN_VERSION_CODE: '-1' })).toThrow('CUSTOMER_APP_MIN_VERSION_CODE');
-    expect(() => parseEnv({ ...VALID, CUSTOMER_APP_MIN_VERSION_CODE: '1.5' })).toThrow('CUSTOMER_APP_MIN_VERSION_CODE');
   });
 
   test('rejects short and identical JWT secrets without printing their values', () => {

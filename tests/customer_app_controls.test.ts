@@ -1,11 +1,18 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
+import { beforeEach, afterEach, expect, spyOn, test } from 'bun:test';
 import { Types } from 'mongoose';
 import { env } from '../src/config/env';
 import { signCustomerToken } from '../src/lib/customer_session';
+import { CustomerNotification } from '../src/models/customer_notification';
+import { CustomerPushToken } from '../src/models/customer_push_token';
 import { CustomerAccount } from '../src/models/customer_account';
 import { call } from './api';
 
-const previous = { CUSTOMER_APP_MAINTENANCE: env.CUSTOMER_APP_MAINTENANCE, CUSTOMER_APP_MIN_VERSION_CODE: env.CUSTOMER_APP_MIN_VERSION_CODE };
+beforeEach(() => {
+  spyOn(CustomerNotification, 'deleteMany').mockResolvedValue({ acknowledged: true, deletedCount: 0 });
+  spyOn(CustomerPushToken, 'deleteMany').mockResolvedValue({ acknowledged: true, deletedCount: 0 });
+});
+afterEach(() => { (CustomerNotification.deleteMany as unknown as { mockRestore(): void }).mockRestore(); (CustomerPushToken.deleteMany as unknown as { mockRestore(): void }).mockRestore(); });
+const previous = { CUSTOMER_APP_MAINTENANCE: env.CUSTOMER_APP_MAINTENANCE };
 afterEach(() => Object.assign(env, previous));
 
 test('public config remains reachable during maintenance and customer auth is gated', async () => {
@@ -16,10 +23,9 @@ test('public config remains reachable during maintenance and customer auth is ga
   expect(response.status).toBe(503); expect(response.error?.code).toBe('MAINTENANCE_MODE');
 });
 
-test('minimum version gate rejects outdated clients before authentication', async () => {
-  env.CUSTOMER_APP_MIN_VERSION_CODE = 100;
+test('version recommendation never blocks customer sign-in', async () => {
   const result = await call('GET', '/customer-app/overview');
-  expect(result.status).toBe(426); expect(result.error?.code).toBe('CLIENT_UPDATE_REQUIRED');
+  expect(result.status).toBe(401); expect(result.error?.code).toBe('UNAUTHORIZED');
   expect((await call('GET', '/customer-app/config')).status).toBe(200);
   expect((await call('GET', '/customer-app/overview', { headers: { 'X-Customer-App-Version': '100' } })).status).toBe(401);
   expect((await call('GET', '/customer-app/overview', { headers: { 'X-Customer-App-Version': 'invalid' } })).status).toBe(400);
