@@ -194,3 +194,16 @@ export const logout = customerAppController.createHandlers(async (c) => {
   await CustomerAccount.updateOne({ _id: new Types.ObjectId(sub), tokenVersion: ver }, { $pull: { sessions: { id: sid } } });
   return c.json({ data: { ok: true } });
 });
+
+/** Delete only this verified app identity. Retailer-owned purchase/payment/device records are retained. */
+export const deleteAccount = customerAppController.createHandlers(async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const { sub, ver, sid } = c.var.customer;
+  const id = new Types.ObjectId(sub);
+  const result = await CustomerAccount.deleteOne({
+    _id: id, tokenVersion: ver, sessions: { $elemMatch: { id: sid, expiresAt: { $gt: new Date() } } },
+  });
+  // A lost response can safely be retried with the same still-signed token; never remove a recreated identity.
+  if (result.deletedCount === 0 && await CustomerAccount.exists({ _id: id })) throw new UnauthorizedError();
+  return c.json({ data: { ok: true } });
+});

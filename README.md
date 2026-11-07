@@ -60,3 +60,8 @@ bun run start
 ### Hosting Platforms
 
 - **Render / Railway / Fly.io / VPS**: Deploy in a Bun environment. Configure environment variables (`MONGODB_URI`, `APP_ORIGIN`, JWT secrets, etc.) and expose `PORT` (default 5001).
+### Customer app service controls and deletion
+
+`GET /api/v1/customer-app/config` is public and uncached. `CUSTOMER_APP_MAINTENANCE=true` gates customer routes with HTTP 503 / `MAINTENANCE_MODE`; `CUSTOMER_APP_MIN_VERSION_CODE=N` requires `X-Customer-App-Version >= N`, returning HTTP 426 / `CLIENT_UPDATE_REQUIRED`. Defaults are false / 0. Maintenance takes precedence. Staff portal, device APIs and configuration remain reachable. Restart the backend after changing environment values. Only enable a minimum version after that version is available on Google Play.
+
+`DELETE /api/v1/customer-app/account` requires a valid signed customer token and an active, unexpired session on the account. It deletes the CustomerAccount identity (password, setup/reset challenges and all sessions) only. Retailer customers, contracts, payments and devices remain. Valid signed retries after a successful deletion are idempotent; revoked sessions cannot remove an existing identity. Deletion remains reachable during maintenance/update gates. The Android client deletes its local encrypted session and overview after success. A subsequent verified sign-up may access the same retained retailer records.

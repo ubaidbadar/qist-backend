@@ -9,6 +9,7 @@ export const customerLoginSchema = z.object({ phone: mobileSchema, password: pas
 export const customerRecoverySchema = z.object({ phone: mobileSchema });
 export const customerVerifyCodeSchema = customerRecoverySchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
 export const customerSetPasswordSchema = customerLoginSchema.extend({ setupToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Verify your WhatsApp code again') });
+export interface CustomerAppConfig { maintenance: boolean; minimumVersionCode: number }
 export interface CustomerAuthStart { next: 'password' | 'otp' | 'unregistered'; retryAfterSeconds?: number }
 export interface CustomerSetupProof { setupToken: string; expiresAt: string }
 export const customerResetSchema = customerLoginSchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });

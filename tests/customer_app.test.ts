@@ -63,6 +63,21 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     const formatted = '+92 ' + phone.slice(1);
     expect((await call('POST', '/customer-app/auth/login', { body: { phone: formatted, password: PASSWORD } })).status).toBe(200);
   });
+  test('deleting an app identity revokes all sessions and retains retailer records', async () => {
+    const { phone, customer, contract, shop } = await buyer();
+    const token = await activate(phone);
+    const second = (await call<CustomerAppSession>('POST', '/customer-app/auth/login', { body: { phone, password: PASSWORD } })).data.accessToken;
+    const before = await overview(token);
+    expect((await call('DELETE', '/customer-app/account', { token })).status).toBe(200);
+    expect(await CustomerAccount.exists({ phone })).toBeNull();
+    expect((await overview(token)).status).toBe(401);
+    expect((await overview(second)).status).toBe(401);
+    expect((await call('GET', `/customers/${customer._id}`, { token: shop.token })).status).toBe(200);
+    expect((await call('GET', `/contracts/${contract!._id}`, { token: shop.token })).status).toBe(200);
+    expect(await Payment.countDocuments({ contractId: new Types.ObjectId(contract!._id) })).toBe(before.data.payments.items.length);
+    const start = await call<{ next: string }>('POST', '/customer-app/auth/start', { body: { phone } });
+    expect(start.data.next).toBe('otp');
+  });
   test('only enabled instructions for the selected retailer reach the customer', async () => {
     const a = await buyer(); const b = await buyer(a.phone); const token = await activate(a.phone);
     const wallet = { id: crypto.randomUUID(), kind: 'jazzcash' as const, enabled: true, accountTitle: 'Retailer A', accountNumber: '03001234567' };
