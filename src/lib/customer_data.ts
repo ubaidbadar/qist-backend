@@ -19,7 +19,7 @@ interface ReadRow {
   device?: { lockState: 'locked' | 'unlocked' } | null;
 }
 
-const choice = (row: ContractRow): CustomerAppContractChoice => ({ id: String(row._id), deviceLabel: row.deviceLabel, retailer: row.retailer, status: row.status });
+const choice = (row: ContractRow): CustomerAppContractChoice => ({ id: String(row._id), deviceLabel: row.deviceLabel, retailer: row.retailer, status: row.status, count: row.count, nextDueDate: row.nextDueDate ?? null, nextAmount: row.nextAmount ?? 0, completedOn: row.completedOn ?? null });
 function pageOf(rows: ReadRow['payments']): Page<CustomerAppPayment> {
   const items = rows.slice(0, PAGE_SIZE).map(({ _id, ...payment }) => ({ id: String(_id), ...payment }));
   return { items, nextCursor: rows.length > PAGE_SIZE ? items.at(-1)!.id : null };
@@ -43,6 +43,18 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
         { $match: { ...(paymentsOnly && contractId ? { _id: new Types.ObjectId(contractId) } : {}), $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
         { $sort: { _id: -1 } },
         { $project: { orgId: 1, customerId: 1, deviceId: 1, branchId: 1, deviceLabel: 1, status: 1, downPayment: 1, totalPayable: 1, paidTotal: 1, lateFees: 1, count: 1, frequency: 1 } },
+        ...(!paymentsOnly ? [
+          { $lookup: { from: 'installments', let: { contract: '$_id', org: '$orgId' }, pipeline: [
+            { $match: { status: { $nin: ['paid', 'waived'] }, $expr: { $and: [{ $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }] } } },
+            { $sort: { number: 1 as const } }, { $limit: 1 }, { $project: { _id: 0, dueDate: 1, remaining: { $max: [0, { $subtract: [{ $add: ['$amount', '$lateFee'] }, '$paidAmount'] }] } } },
+          ], as: 'nextInstallment' } },
+          { $lookup: { from: 'payments', let: { contract: '$_id', org: '$orgId', customer: '$customerId', status: '$status' }, pipeline: [
+            { $match: { voidedAt: null, $expr: { $and: [{ $eq: ['$$status', 'completed'] }, { $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }, { $eq: ['$customerId', '$$customer'] }] } } },
+            { $sort: { receivedOn: -1 as const, _id: -1 as const } }, { $limit: 1 }, { $project: { _id: 0, receivedOn: 1 } },
+          ], as: 'lastPayment' } },
+          { $set: { nextDueDate: { $ifNull: [{ $arrayElemAt: ['$nextInstallment.dueDate', 0] }, null] }, nextAmount: { $ifNull: [{ $arrayElemAt: ['$nextInstallment.remaining', 0] }, 0] }, completedOn: { $ifNull: [{ $arrayElemAt: ['$lastPayment.receivedOn', 0] }, null] } } },
+          { $unset: ['nextInstallment', 'lastPayment'] },
+        ] : []),
       ], as: 'contracts' } },
       { $project: { fullName: 1, contracts: { $map: { input: '$contracts', as: 'contract', in: { $mergeObjects: ['$$contract', { retailer: '$org.name', paymentMethods: { $filter: { input: { $ifNull: ['$org.paymentMethods', []] }, as: 'method', cond: { $eq: ['$$method.enabled', true] } } } }] } } } } },
     ], as: 'customers' } },
@@ -59,7 +71,7 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
   if (!paymentsOnly) pipeline.push(
     { $lookup: { from: 'installments', let: { contract: '$selected._id', org: '$selected.orgId' }, pipeline: [
       { $match: { $expr: { $and: [{ $ne: ['$$contract', null] }, { $eq: ['$contractId', '$$contract'] }, { $eq: ['$orgId', '$$org'] }] } } },
-      { $sort: { number: 1 } }, { $project: { _id: 0, number: 1, dueDate: 1, amount: 1, lateFee: 1, paidAmount: 1, status: 1 } },
+      { $sort: { number: 1 as const } }, { $project: { _id: 0, number: 1, dueDate: 1, amount: 1, lateFee: 1, paidAmount: 1, status: 1 } },
     ], as: 'installments' } },
     { $lookup: { from: 'devices', let: { device: '$selected.deviceId', org: '$selected.orgId' }, pipeline: [
       { $match: { $expr: { $and: [{ $eq: ['$_id', '$$device'] }, { $eq: ['$orgId', '$$org'] }] } } },

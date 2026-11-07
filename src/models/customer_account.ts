@@ -6,6 +6,7 @@ const resetSchema = new Schema({
   sentAt: { type: Date, required: true },
   attempts: { type: Number, default: 0 },
 }, { _id: false });
+const setupSchema = new Schema({ digest: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });
 const sessionSchema = new Schema({ id: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });
 
 /** A verified phone identity, independent of retailer staff. Never stores retailer permissions. */
@@ -14,6 +15,7 @@ const schema = new Schema({
   passwordHash: { type: String, default: null, select: false },
   tokenVersion: { type: Number, default: 0, select: false },
   sessions: { type: [sessionSchema], default: [], select: false },
+  setup: { type: setupSchema, default: null, select: false },
   reset: { type: resetSchema, default: null, select: false },
   resetWindowStart: { type: Date, default: null, select: false },
   resetSentCount: { type: Number, default: 0, select: false },
