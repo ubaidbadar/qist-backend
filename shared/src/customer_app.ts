@@ -7,12 +7,16 @@ import type { Page } from './api';
 
 export const customerLoginSchema = z.object({ phone: mobileSchema, password: passwordSchema });
 export const customerRecoverySchema = z.object({ phone: mobileSchema });
+export const customerVerifyCodeSchema = customerRecoverySchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
+export const customerSetPasswordSchema = customerLoginSchema.extend({ setupToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Verify your WhatsApp code again') });
+export interface CustomerAuthStart { next: 'password' | 'otp' | 'unregistered'; retryAfterSeconds?: number }
+export interface CustomerSetupProof { setupToken: string; expiresAt: string }
 export const customerResetSchema = customerLoginSchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
 export const customerOverviewQuerySchema = z.object({ contractId: objectIdSchema.optional() });
 export const customerPaymentsQuerySchema = z.object({ contractId: objectIdSchema, cursor: objectIdSchema.optional() });
 
 export interface CustomerAppSession { accessToken: string; expiresAt: string }
-export interface CustomerAppContractChoice { id: string; deviceLabel: string; retailer: string; status: ContractStatus }
+export interface CustomerAppContractChoice { id: string; deviceLabel: string; retailer: string; status: ContractStatus; nextDueDate?: string | null; nextAmount?: number; count?: number; completedOn?: string | null }
 export interface CustomerAppInstallment {
   number: number; dueDate: string; amount: number; lateFee: number; paidAmount: number; status: InstallmentStatus;
 }
