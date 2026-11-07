@@ -32,6 +32,8 @@ const envSchema = z
     SMTP_PASS: optionalText,
     /** Sender for emails, e.g. `Qist <no-reply@example.com>`; the address must be verified with the SMTP provider. */
     SMTP_FROM: optionalText,
+    /** Customer app maintenance gate; disabled until explicitly configured. */
+    CUSTOMER_APP_MAINTENANCE: z.stringbool().default(false),
     /** Optional until customer WhatsApp verification is enabled. Never used by staff auth. */
     WHATSAPP_ACCESS_TOKEN: optionalText,
     WHATSAPP_PHONE_NUMBER_ID: z.preprocess((value) => value === '' ? undefined : value, z.string().regex(/^\d+$/).optional()),

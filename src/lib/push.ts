@@ -116,3 +116,25 @@ export async function wakeDevice(orgId: Types.ObjectId, deviceId: Types.ObjectId
     });
   }
 }
+
+/** Generic notification only; names, amounts and lock state stay behind the customer API. */
+export async function sendCustomerPush(token: string, eventId: string): Promise<'sent' | 'gone' | 'retry'> {
+  try {
+    const account = await credentials();
+    const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await accessToken()}` },
+      body: JSON.stringify({ message: {
+        token, data: { action: 'customer_changed', eventId },
+        android: { priority: 'HIGH', collapse_key: 'qist-customer-updates', ttl: '86400s' },
+      } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (response.ok) return 'sent';
+    if (response.status === 401) accessTokenPromise = undefined;
+    const body = await response.json() as { error?: { details?: { errorCode?: string }[] } };
+    if (body.error?.details?.some((detail) => detail.errorCode === 'UNREGISTERED')) return 'gone';
+    logger.warn('Customer notification delivery failed', { status: response.status });
+  } catch { logger.warn('Customer notification delivery unavailable'); }
+  return 'retry';
+}

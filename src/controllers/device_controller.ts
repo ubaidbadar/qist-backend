@@ -1,3 +1,4 @@
+import { notifyCustomerDeviceChange } from '../lib/customer_notifications';
 import {
   commandAckSchema,
   deviceCheckinSchema,
@@ -138,5 +139,6 @@ export const acknowledge = deviceController.createHandlers(validate('json', comm
     return command;
   });
 
+  if (result !== 'failed') await notifyCustomerDeviceChange(device.orgId, device._id, updated._id);
   return c.json({ data: updated });
 });

@@ -23,6 +23,7 @@ describe('parseEnv', () => {
     expect(env.PORT).toBe(5001);
     expect(env.NODE_ENV).toBe('development');
     expect(env.TRUST_PROXY).toBe(false);
+    expect(env.CUSTOMER_APP_MAINTENANCE).toBe(false);
   });
 
   test('rejects short and identical JWT secrets without printing their values', () => {

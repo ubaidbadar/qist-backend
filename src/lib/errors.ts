@@ -54,7 +54,7 @@ export class PayloadTooLargeError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(readonly retryAfterSeconds: number) {
-    super('RATE_LIMITED', 429, 'Too many requests, please try again shortly');
+  constructor(readonly retryAfterSeconds: number, code: ErrorCode = 'RATE_LIMITED', message = 'Too many requests, please try again shortly') {
+    super(code, 429, message, { retryAfterSeconds });
   }
 }

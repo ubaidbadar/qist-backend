@@ -12,6 +12,8 @@ interface ContractRow extends Omit<CustomerAppContractChoice, 'id'> {
   downPayment: number; totalPayable: number; paidTotal: number; lateFees: number; count: number; frequency: 'weekly' | 'biweekly' | 'monthly';
 }
 interface ReadRow {
+  notifications?: { _id: Types.ObjectId; contractId: Types.ObjectId; kind: string; title: string; body: string; createdAt: Date; readAt: Date | null }[];
+  fallbackRetailer?: string;
   phone: string; name: string; contracts: ContractRow[]; selected?: ContractRow | null;
   installments?: CustomerAppInstallment[];
   payments: (Omit<CustomerAppPayment, 'id'> & { _id: Types.ObjectId })[];
@@ -35,6 +37,11 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
     ] };
   const pipeline: PipelineStage[] = [
     { $match: { _id: new Types.ObjectId(claims.sub), tokenVersion: claims.ver, sessions: { $elemMatch: { id: claims.sid, expiresAt: { $gt: new Date() } } } } },
+    ...(!paymentsOnly ? [{ $lookup: { from: 'customer_notifications', let: { account: '$_id' }, pipeline: [
+      { $match: { expiresAt: { $gt: new Date() }, $expr: { $eq: ['$accountId', '$$account'] } } },
+      { $sort: { _id: -1 as const } }, { $limit: 30 },
+      { $project: { contractId: 1, kind: 1, title: 1, body: 1, createdAt: 1, readAt: 1 } },
+    ], as: 'notifications' } }] : []),
     { $lookup: { from: 'customers', let: { phone: '$phone' }, pipeline: [
       { $match: { $expr: { $eq: ['$phone', '$$phone'] } } },
       { $lookup: { from: 'orgs', localField: 'orgId', foreignField: '_id', pipeline: [{ $match: { status: 'active' } }, { $project: { name: 1, paymentMethods: 1 } }], as: 'org' } },
@@ -56,7 +63,7 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
           { $unset: ['nextInstallment', 'lastPayment'] },
         ] : []),
       ], as: 'contracts' } },
-      { $project: { fullName: 1, contracts: { $map: { input: '$contracts', as: 'contract', in: { $mergeObjects: ['$$contract', { retailer: '$org.name', paymentMethods: { $filter: { input: { $ifNull: ['$org.paymentMethods', []] }, as: 'method', cond: { $eq: ['$$method.enabled', true] } } } }] } } } } },
+      { $project: { fullName: 1, orgId: 1, branchId: 1, retailer: '$org.name', contracts: { $map: { input: '$contracts', as: 'contract', in: { $mergeObjects: ['$$contract', { retailer: '$org.name', paymentMethods: { $filter: { input: { $ifNull: ['$org.paymentMethods', []] }, as: 'method', cond: { $eq: ['$$method.enabled', true] } } } }] } } } } },
     ], as: 'customers' } },
     { $set: { contracts: { $reduce: { input: '$customers', initialValue: [], in: { $concatArrays: ['$$value', '$$this.contracts'] } } } } },
     { $set: { selected } },
@@ -77,12 +84,13 @@ function readPipeline(claims: CustomerClaims, contractId?: string, cursor?: stri
       { $match: { $expr: { $and: [{ $eq: ['$_id', '$$device'] }, { $eq: ['$orgId', '$$org'] }] } } },
       { $project: { _id: 0, lockState: 1 } },
     ], as: 'device' } },
-    { $lookup: { from: 'branches', let: { branch: '$selected.branchId', org: '$selected.orgId' }, pipeline: [
+    { $lookup: { from: 'branches', let: { branch: { $ifNull: ['$selected.branchId', { $arrayElemAt: ['$customers.branchId', 0] }] }, org: { $ifNull: ['$selected.orgId', { $arrayElemAt: ['$customers.orgId', 0] }] } }, pipeline: [
       { $match: { active: true, $expr: { $and: [{ $eq: ['$_id', '$$branch'] }, { $eq: ['$orgId', '$$org'] }] } } },
       { $project: { _id: 0, phone: 1, address: 1 } },
     ], as: 'branch' } },
   );
   pipeline.push({ $project: {
+    notifications: 1, fallbackRetailer: { $arrayElemAt: ['$customers.retailer', 0] },
     _id: 0, phone: 1, contracts: 1, selected: { $ifNull: ['$selected', null] }, payments: 1,
     name: { $let: {
       vars: { owner: { $arrayElemAt: [{ $filter: { input: '$customers', as: 'customer', cond: { $eq: ['$$customer._id', '$selected.customerId'] } } }, 0] } },
@@ -99,7 +107,8 @@ export async function loadCustomerOverview(claims: CustomerClaims, contractId?: 
   if (contractId && !row.selected) throw new NotFoundError('Plan');
   const selected = row.selected;
   return {
-    profile: { name: row.name, phone: row.phone }, contracts: row.contracts.map(choice), today: todayInShops(), payments: pageOf(row.payments),
+    notifications: (row.notifications ?? []).map((n) => ({ id: String(n._id), contractId: String(n.contractId), kind: n.kind, title: n.title, body: n.body, createdAt: n.createdAt.toISOString(), read: n.readAt != null })),
+    profile: { name: row.name, phone: row.phone, retailer: selected?.retailer ?? row.fallbackRetailer ?? '', retailerPhone: row.branch?.phone ?? '' }, contracts: row.contracts.map(choice), today: todayInShops(), payments: pageOf(row.payments),
     contract: selected ? {
       ...choice(selected), downPayment: selected.downPayment, totalPayable: selected.totalPayable, paidTotal: selected.paidTotal,
       lateFees: selected.lateFees, count: selected.count, frequency: selected.frequency,

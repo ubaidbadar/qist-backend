@@ -4,6 +4,8 @@ import { addDays, todayInShops } from '@shop/shared';
 import { Types } from 'mongoose';
 import { CustomerAccount } from '../src/models/customer_account';
 import { Org } from '../src/models/org';
+import { CustomerNotification } from '../src/models/customer_notification';
+import { notifyCustomerChange } from '../src/lib/customer_notifications';
 import { Payment } from '../src/models/payment';
 import { whatsappTestOutbox, whatsappCodeMessage } from '../src/lib/whatsapp';
 import { addMember, call, newCustomer, PASSWORD, prepareDatabase, randomImei, randomMobile, signupOrg } from './api';
@@ -62,6 +64,21 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     } finally { aggregate.mockRestore(); }
     const formatted = '+92 ' + phone.slice(1);
     expect((await call('POST', '/customer-app/auth/login', { body: { phone: formatted, password: PASSWORD } })).status).toBe(200);
+  });
+  test('deleting an app identity revokes all sessions and retains retailer records', async () => {
+    const { phone, customer, contract, shop } = await buyer();
+    const token = await activate(phone);
+    const second = (await call<CustomerAppSession>('POST', '/customer-app/auth/login', { body: { phone, password: PASSWORD } })).data.accessToken;
+    const before = await overview(token);
+    expect((await call('DELETE', '/customer-app/account', { token })).status).toBe(200);
+    expect(await CustomerAccount.exists({ phone })).toBeNull();
+    expect((await overview(token)).status).toBe(401);
+    expect((await overview(second)).status).toBe(401);
+    expect((await call('GET', `/customers/${customer._id}`, { token: shop.token })).status).toBe(200);
+    expect((await call('GET', `/contracts/${contract!._id}`, { token: shop.token })).status).toBe(200);
+    expect(await Payment.countDocuments({ contractId: new Types.ObjectId(contract!._id) })).toBe(before.data.payments.items.length);
+    const start = await call<{ next: string }>('POST', '/customer-app/auth/start', { body: { phone } });
+    expect(start.data.next).toBe('otp');
   });
   test('only enabled instructions for the selected retailer reach the customer', async () => {
     const a = await buyer(); const b = await buyer(a.phone); const token = await activate(a.phone);
@@ -205,8 +222,22 @@ describe.skipIf(!hasDatabase)('customer app', () => {
   test('OTP verification shares the five-guess limit with legacy reset', async () => {
     const { phone } = await buyer(); const code = await codeFor(phone);
     const wrong = code === '000000' ? '111111' : '000000';
-    for (let i = 0; i < 5; i++) expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code: wrong } })).status).toBe(400);
-    expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code } })).status).toBe(400);
+    for (let i = 0; i < 5; i++) expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code: wrong } })).status).toBe(i == 4 ? 429 : 400);
+    expect((await call('POST', '/customer-app/auth/verify-code', { body: { phone, code } })).status).toBe(429);
+  });
+  test('notification inbox and read markers stay scoped to the verified identity', async () => {
+    const a = await buyer(); const b = await buyer();
+    const tokenA = await activate(a.phone); const tokenB = await activate(b.phone);
+    await notifyCustomerChange(new Types.ObjectId(a.shop.session.org._id), new Types.ObjectId(a.customer._id), new Types.ObjectId(a.contract!._id), 'payment', 'test-payment', false);
+    const notices = (await overview(tokenA)).data.notifications;
+    expect(notices).toHaveLength(1); expect((await overview(tokenB)).data.notifications).toEqual([]);
+    const id = notices[0]!.id;
+    expect((await call('POST', '/customer-app/notifications/read', { token: tokenB, body: { ids: [id] } })).status).toBe(200);
+    expect((await overview(tokenA)).data.notifications[0]!.read).toBe(false);
+    expect((await call('POST', '/customer-app/notifications/read', { token: tokenA, body: { ids: [id] } })).status).toBe(200);
+    expect((await overview(tokenA)).data.notifications[0]!.read).toBe(true);
+    expect((await call('DELETE', '/customer-app/account', { token: tokenA })).status).toBe(200);
+    expect(await CustomerNotification.countDocuments({ _id: new Types.ObjectId(id) })).toBe(0);
   });
   test('suspended retailers cannot trigger phone-first onboarding', async () => {
     const { phone, shop } = await buyer();
