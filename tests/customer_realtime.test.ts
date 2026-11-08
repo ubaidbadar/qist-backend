@@ -79,12 +79,47 @@ for (const outcome of ['gone', 'retry'] as const) test(`durable delivery handles
   } } as unknown as ReturnType<typeof CustomerNotification.findOneAndUpdate>); mocks.push(claim);
   const account = spyOn(CustomerAccount, 'findById').mockReturnValue(chain({ sessions: [{ id: claims.sid, expiresAt: expiry }] }) as unknown as ReturnType<typeof CustomerAccount.findById>); mocks.push(account);
   const tokens = spyOn(CustomerPushToken, 'find').mockReturnValue(chain([{ _id: 'token-hash', token: 'fcm-token' }]) as unknown as ReturnType<typeof CustomerPushToken.find>); mocks.push(tokens);
-  const send = spyOn(push, 'sendCustomerPush').mockResolvedValue(outcome); mocks.push(send);
+  const send = spyOn(push, 'sendCustomerPush').mockResolvedValue({ result: outcome, retryAfterSeconds: outcome === 'retry' ? 3600 : 0 }); mocks.push(send);
   const removal = spyOn(CustomerPushToken, 'deleteOne').mockResolvedValue({ acknowledged: true, deletedCount: 1 }); mocks.push(removal);
   const write = spyOn(CustomerNotification, 'updateOne').mockResolvedValue({ acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null }); mocks.push(write);
   await deliverCustomerNotifications();
   expect(send).toHaveBeenCalledWith('fcm-token', String(event._id));
   const values = write.mock.calls[0]![1] as unknown as { $set: { deliveredAt?: Date; nextAttemptAt?: Date } };
   if (outcome === 'gone') { expect(removal).toHaveBeenCalledTimes(1); expect(values.$set.deliveredAt).toBeInstanceOf(Date); }
-  else { expect(removal).not.toHaveBeenCalled(); expect(values.$set.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now()); }
+  else { expect(removal).not.toHaveBeenCalled(); expect(values.$set.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(Date.now() + 3_599_000); }
+});
+
+test('delivery retry excludes registrations already delivered successfully', async () => {
+  const event = { _id: new Types.ObjectId(), accountId: new Types.ObjectId(claims.sub), attempts: 2, deliveredTokens: ['already-sent'] };
+  let first = true;
+  const claim = spyOn(CustomerNotification, 'findOneAndUpdate').mockReturnValue({ lean: async () => {
+    if (!first) return null; first = false; return event;
+  } } as unknown as ReturnType<typeof CustomerNotification.findOneAndUpdate>); mocks.push(claim);
+  const account = spyOn(CustomerAccount, 'findById').mockReturnValue(chain({ sessions: [{ id: claims.sid, expiresAt: expiry }] }) as unknown as ReturnType<typeof CustomerAccount.findById>); mocks.push(account);
+  const tokens = spyOn(CustomerPushToken, 'find').mockReturnValue(chain([{ _id: 'retry-token', token: 'pending-fcm-token' }]) as unknown as ReturnType<typeof CustomerPushToken.find>); mocks.push(tokens);
+  const send = spyOn(push, 'sendCustomerPush').mockResolvedValue({ result: 'sent', retryAfterSeconds: 0 }); mocks.push(send);
+  const write = spyOn(CustomerNotification, 'updateOne').mockResolvedValue({ acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0, upsertedId: null }); mocks.push(write);
+  await deliverCustomerNotifications();
+  const filter = tokens.mock.calls[0]![0] as unknown as { _id: { $nin: string[] } };
+  expect(filter._id.$nin).toEqual(['already-sent']);
+  expect(send).toHaveBeenCalledTimes(1); expect(send).toHaveBeenCalledWith('pending-fcm-token', String(event._id));
+  const update = write.mock.calls[0]![1] as unknown as { $addToSet: { deliveredTokens: { $each: string[] } } };
+  expect(update.$addToSet.deliveredTokens.$each).toEqual(['retry-token']);
+});
+
+test('due reminders use tenant scoped aggregation and bounded bulk batches', async () => {
+  const { Org } = await import('../src/models/org');
+  const { Installment } = await import('../src/models/installment');
+  const { sendCustomerDueReminders } = await import('../src/lib/customer_notifications');
+  const orgId = new Types.ObjectId(); const accountId = new Types.ObjectId(); const contractId = new Types.ObjectId();
+  const orgs = spyOn(Org, 'find').mockReturnValue(chain([{ _id: orgId }]) as unknown as ReturnType<typeof Org.find>); mocks.push(orgs);
+  async function* dueRows() { for (let i = 0; i < 101; i++) yield { _id: new Types.ObjectId(), contractId, accountId }; }
+  const aggregate = spyOn(Installment, 'aggregate').mockReturnValue({ cursor: () => dueRows() } as unknown as ReturnType<typeof Installment.aggregate>); mocks.push(aggregate);
+  const bulk = spyOn(CustomerNotification, 'bulkWrite').mockResolvedValue({} as Awaited<ReturnType<typeof CustomerNotification.bulkWrite>>); mocks.push(bulk);
+  const claim = spyOn(CustomerNotification, 'findOneAndUpdate').mockReturnValue({ lean: async () => null } as unknown as ReturnType<typeof CustomerNotification.findOneAndUpdate>); mocks.push(claim);
+  await sendCustomerDueReminders();
+  expect(aggregate).toHaveBeenCalledTimes(1);
+  const pipeline = aggregate.mock.calls[0]![0] as unknown as { $match: { orgId: Types.ObjectId } }[];
+  expect(String(pipeline[0]!.$match.orgId)).toBe(String(orgId));
+  expect(bulk.mock.calls.map((args) => (args[0] as unknown[]).length)).toEqual([100, 1]);
 });

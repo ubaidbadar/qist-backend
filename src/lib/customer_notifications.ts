@@ -19,6 +19,12 @@ const copy: Record<Kind, { title: string; body: string }> = {
   due: { title: 'Installment due today', body: 'An installment is due today. Open your plan for the amount and payment details.' },
 };
 
+function notificationWrite(accountId: Types.ObjectId, contractId: Types.ObjectId, kind: Kind, eventKey: string, now = new Date()) {
+  return { updateOne: { filter: { accountId, eventKey }, update: { $setOnInsert: {
+    accountId, contractId, eventKey, kind, ...copy[kind], expiresAt: new Date(now.getTime() + 90 * 86400_000),
+  } }, upsert: true } };
+}
+
 /** Runs after the business transaction commits. An FCM outage never rolls it back. */
 export async function notifyCustomerChange(orgId: Types.ObjectId, customerId: Types.ObjectId, contractId: Types.ObjectId, kind: Kind, eventKey: string, sendNow = true) {
   try {
@@ -30,9 +36,8 @@ export async function notifyCustomerChange(orgId: Types.ObjectId, customerId: Ty
       { $unwind: '$account' }, { $project: { _id: 0, accountId: '$account._id' } },
     ]);
     if (!account) return;
-    await CustomerNotification.updateOne({ accountId: account.accountId, eventKey }, { $setOnInsert: {
-      accountId: account.accountId, contractId, eventKey, kind, ...copy[kind], expiresAt: new Date(Date.now() + 90 * 86400_000),
-    } }, { upsert: true });
+    const { filter, update, upsert } = notificationWrite(account.accountId, contractId, kind, eventKey).updateOne;
+    await CustomerNotification.updateOne(filter, update, { upsert });
     if (sendNow) void deliverCustomerNotifications().catch(() => logger.warn('Customer push queue deferred'));
   } catch { logger.warn('Could not queue customer notification'); }
 }
@@ -43,27 +48,29 @@ export async function deliverCustomerNotifications() {
   if (delivering) return;
   delivering = true;
   try {
-  for (let i = 0; i < 20; i++) {
-    const now = new Date();
-    const event = await CustomerNotification.findOneAndUpdate({ deliveredAt: null, attempts: { $lt: 5 },
-      nextAttemptAt: { $lte: now }, leaseUntil: { $lte: now }, expiresAt: { $gt: now } },
-    { $set: { leaseUntil: new Date(now.getTime() + 60_000) }, $inc: { attempts: 1 } }, { sort: { _id: 1 }, returnDocument: 'after' }).lean();
-    if (!event) return;
-    try {
-      const account = await CustomerAccount.findById(event.accountId).select('+sessions').lean();
-      const sessions = account?.sessions.filter((s) => s.expiresAt > now).map((s) => s.id) ?? [];
-      const tokens = await CustomerPushToken.find({ accountId: event.accountId, sessionId: { $in: sessions }, expiresAt: { $gt: now } }).select('+token').lean();
-      const results = await Promise.all(tokens.map(async (token) => {
-        const result = await sendCustomerPush(token.token, String(event._id));
-        if (result === 'gone') await CustomerPushToken.deleteOne({ _id: token._id, accountId: event.accountId });
-        return result;
-      }));
-      const retry = results.includes('retry');
-      await CustomerNotification.updateOne({ _id: event._id }, { $set: { leaseUntil: new Date(0),
-        ...(retry ? { nextAttemptAt: new Date(Date.now() + 60_000 * 2 ** event.attempts) } : { deliveredAt: new Date() }),
-      } });
-    } catch { logger.warn('Customer notification retry deferred'); }
-  }
+    for (let i = 0; i < 20; i++) {
+      const now = new Date();
+      const event = await CustomerNotification.findOneAndUpdate({ deliveredAt: null, attempts: { $lt: 5 },
+        nextAttemptAt: { $lte: now }, leaseUntil: { $lte: now }, expiresAt: { $gt: now } },
+      { $set: { leaseUntil: new Date(now.getTime() + 60_000) }, $inc: { attempts: 1 } }, { sort: { _id: 1 }, returnDocument: 'after' }).lean();
+      if (!event) return;
+      try {
+        const account = await CustomerAccount.findById(event.accountId).select('+sessions').lean();
+        const sessions = account?.sessions.filter((s) => s.expiresAt > now).map((s) => s.id) ?? [];
+        const tokens = await CustomerPushToken.find({ _id: { $nin: event.deliveredTokens ?? [] }, accountId: event.accountId, sessionId: { $in: sessions }, expiresAt: { $gt: now } }).select('+token').lean();
+        const results = await Promise.all(tokens.map(async (token) => {
+          const delivery = await sendCustomerPush(token.token, String(event._id));
+          if (delivery.result === 'gone') await CustomerPushToken.deleteOne({ _id: token._id, accountId: event.accountId });
+          return { id: token._id, ...delivery };
+        }));
+        const retry = results.some(({ result }) => result === 'retry');
+        const retryAfter = results.reduce((wait, delivery) => Math.max(wait, delivery.retryAfterSeconds * 1000), 0);
+        const delivered = results.filter(({ result }) => result === 'sent').map(({ id }) => id);
+        await CustomerNotification.updateOne({ _id: event._id }, { $set: { leaseUntil: new Date(0),
+          ...(retry ? { nextAttemptAt: new Date(Date.now() + Math.max(60_000 * 2 ** event.attempts, retryAfter) + Math.floor(Math.random() * 10_000)) } : { deliveredAt: new Date() }),
+        }, ...(delivered.length ? { $addToSet: { deliveredTokens: { $each: delivered } } } : {}) });
+      } catch { logger.warn('Customer notification retry deferred'); }
+    }
   } finally { delivering = false; }
 }
 
@@ -71,11 +78,25 @@ export async function deliverCustomerNotifications() {
 export async function sendCustomerDueReminders(now = new Date()) {
   const today = todayInShops(now);
   for (const org of await Org.find({ status: 'active' }).select('_id').lean()) {
-    const installments = Installment.find({ orgId: org._id, dueDate: today, status: { $in: ['pending', 'partial', 'overdue'] } }).select('_id contractId').lean().cursor();
-    for await (const installment of installments) {
-      const contract = await Contract.findOne({ _id: installment.contractId, orgId: org._id, status: { $in: ['active', 'defaulted'] } }).select('customerId').lean();
-      if (contract) await notifyCustomerChange(org._id, contract.customerId, installment.contractId, 'due', `due:${installment._id}:${today}`, false);
+    const rows = Installment.aggregate<{ _id: Types.ObjectId; contractId: Types.ObjectId; accountId: Types.ObjectId }>([
+      { $match: { orgId: org._id, dueDate: today, status: { $in: ['pending', 'partial', 'overdue'] } } },
+      { $lookup: { from: 'contracts', localField: 'contractId', foreignField: '_id', pipeline: [
+        { $match: { orgId: org._id, status: { $in: ['active', 'defaulted'] } } }, { $project: { customerId: 1 } },
+      ], as: 'contract' } },
+      { $unwind: '$contract' },
+      { $lookup: { from: 'customers', localField: 'contract.customerId', foreignField: '_id', pipeline: [
+        { $match: { orgId: org._id } }, { $project: { phone: 1 } },
+      ], as: 'customer' } },
+      { $unwind: '$customer' },
+      { $lookup: { from: 'customer_accounts', localField: 'customer.phone', foreignField: 'phone', pipeline: [{ $project: { _id: 1 } }], as: 'account' } },
+      { $unwind: '$account' }, { $project: { contractId: 1, accountId: '$account._id' } },
+    ]).cursor({ batchSize: 100 });
+    const batch: ReturnType<typeof notificationWrite>[] = [];
+    for await (const installment of rows) {
+      batch.push(notificationWrite(installment.accountId, installment.contractId, 'due', `due:${installment._id}:${today}`, now));
+      if (batch.length === 100) { await CustomerNotification.bulkWrite(batch.splice(0), { ordered: false }); }
     }
+    if (batch.length) await CustomerNotification.bulkWrite(batch, { ordered: false });
   }
   await deliverCustomerNotifications();
   return { today, next: addDays(today, 1) };

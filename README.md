@@ -77,3 +77,7 @@ FCM HTTP v1 uses the existing `GOOGLE_APPLICATION_CREDENTIALS` service account, 
 Run `bun run db:indexes` on the chosen backend before enabling the feature to create the inbox uniqueness, delivery queue and TTL indexes and the unique per-session push-token index. No Firebase server keys belong in the Android app. The client’s existing Firebase project registration must match this service account project. Deployment and production end-to-end FCM testing remain separate from committing this code.
 
 Verification errors distinguish incorrect/expired codes and exhausted attempts. The fifth wrong attempt returns HTTP 429 / `OTP_ATTEMPTS_EXCEEDED`, with the actual remaining challenge lifetime in `Retry-After` and `error.details.retryAfterSeconds`. Resends cannot bypass that lockout; the app does not invent a ten-minute timer.
+
+Notification delivery records successful registration hashes on each event, so retrying a partial delivery excludes recipients already reached. Android notifications also avoid alerting again when an existing event notification is updated. The due-day job uses an organization-scoped aggregation cursor and bulk upserts in batches of 100, rather than issuing contract/account reads per installment. Existing account/event uniqueness and retention rules remain in effect.
+
+Delivery retries honor Firebase Retry-After (seconds or HTTP date), use exponential backoff with jitter, and retain valid registration tokens for provider/auth/payload failures. Only confirmed invalid registrations are removed.

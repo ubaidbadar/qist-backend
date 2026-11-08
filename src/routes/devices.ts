@@ -4,6 +4,7 @@ import { requirePermission } from '../middleware/require_permission';
 
 export const deviceRoutes = authedRouter()
   .get('/', ...devices.list)
+  .get('/:id', ...devices.get)
   .post('/', requirePermission('stock.write'), ...devices.create)
   .patch('/:id', requirePermission('stock.write'), ...devices.update)
   .post('/:id/transfer', requirePermission('stock.transfer'), ...devices.transfer)
