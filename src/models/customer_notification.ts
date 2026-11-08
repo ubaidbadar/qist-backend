@@ -8,6 +8,7 @@ const schema = new Schema({
   title: { type: String, required: true },
   body: { type: String, required: true },
   readAt: { type: Date, default: null },
+  deliveredTokens: { type: [String], default: [] },
   deliveredAt: { type: Date, default: null },
   attempts: { type: Number, default: 0 },
   nextAttemptAt: { type: Date, default: Date.now },

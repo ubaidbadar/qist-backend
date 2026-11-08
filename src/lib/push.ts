@@ -117,8 +117,30 @@ export async function wakeDevice(orgId: Types.ObjectId, deviceId: Types.ObjectId
   }
 }
 
+export interface CustomerPushDelivery { result: 'sent' | 'gone' | 'retry'; retryAfterSeconds: number }
+
+/** Do not delete valid registrations for a bad payload or a Firebase project/auth configuration error. */
+export function customerPushDisposition(status: number, body: unknown): CustomerPushDelivery['result'] {
+  if (status >= 200 && status < 300) return 'sent';
+  const error = body && typeof body === 'object' && 'error' in body ? body.error : null;
+  const details = error && typeof error === 'object' && 'details' in error && Array.isArray(error.details) ? error.details : [];
+  const badPayload = details.some((d: unknown) => d && typeof d === 'object' && '@type' in d && d['@type'] === 'type.googleapis.com/google.rpc.BadRequest');
+  const invalidToken = details.some((d: unknown) => d && typeof d === 'object' && '@type' in d && 'errorCode' in d &&
+    d['@type'] === 'type.googleapis.com/google.firebase.fcm.v1.FcmError' &&
+    ((status === 404 && d.errorCode === 'UNREGISTERED') || (status === 400 && d.errorCode === 'INVALID_ARGUMENT' && !badPayload)));
+  return invalidToken ? 'gone' : 'retry';
+}
+
+export function pushRetryAfterSeconds(value: string | null, now = Date.now()): number {
+  if (!value) return 0;
+  const header = value.trim();
+  const seconds = /^\d+$/.test(header) ? Number(header) : /GMT$/i.test(header) ? (Date.parse(header) - now) / 1000 : 0;
+  // Longer waits exceed the inbox event's retention period and will expire without another delivery.
+  return Number.isFinite(seconds) ? Math.min(90 * 86400, Math.max(0, Math.ceil(seconds))) : 0;
+}
+
 /** Generic notification only; names, amounts and lock state stay behind the customer API. */
-export async function sendCustomerPush(token: string, eventId: string): Promise<'sent' | 'gone' | 'retry'> {
+export async function sendCustomerPush(token: string, eventId: string): Promise<CustomerPushDelivery> {
   try {
     const account = await credentials();
     const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`, {
@@ -130,11 +152,13 @@ export async function sendCustomerPush(token: string, eventId: string): Promise<
       } }),
       signal: AbortSignal.timeout(10000),
     });
-    if (response.ok) return 'sent';
+    if (response.ok) return { result: 'sent', retryAfterSeconds: 0 };
     if (response.status === 401) accessTokenPromise = undefined;
-    const body = await response.json() as { error?: { details?: { errorCode?: string }[] } };
-    if (body.error?.details?.some((detail) => detail.errorCode === 'UNREGISTERED')) return 'gone';
-    logger.warn('Customer notification delivery failed', { status: response.status });
+    const retryAfterSeconds = pushRetryAfterSeconds(response.headers.get('Retry-After'));
+    const body: unknown = await response.json().catch(() => null);
+    const result = customerPushDisposition(response.status, body);
+    if (result !== 'gone') logger.warn('Customer notification delivery failed', { status: response.status });
+    return { result, retryAfterSeconds };
   } catch { logger.warn('Customer notification delivery unavailable'); }
-  return 'retry';
+  return { result: 'retry', retryAfterSeconds: 0 };
 }

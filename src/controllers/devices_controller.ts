@@ -64,6 +64,11 @@ export const list = authedController.createHandlers(validate('query', deviceList
   return c.json({ data: await paginate(query, page) });
 });
 
+/** GET /devices/:id: use the same branch scope and cost visibility as inventory. */
+export const get = authedController.createHandlers(async (c) =>
+  c.json({ data: await findDevice(c.var.auth, c.req.param('id')) }),
+);
+
 /** POST /devices */
 export const create = authedController.createHandlers(validate('json', deviceCreateSchema), async (c) => {
   const { auth } = c.var;

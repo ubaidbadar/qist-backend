@@ -45,6 +45,8 @@ describe.skipIf(!hasDatabase)('inventory', () => {
     const staff = await addMember(shop.token, 'staff', [mainBranch]);
     const byOwner = await addDevice(shop.token, newDevice(mainBranch, { costPrice: 4_500_000 }));
     expect(byOwner.data.costPrice).toBe(4_500_000);
+    expect((await call<Device>('GET', `/devices/${byOwner.data._id}`, { token: shop.token })).data.costPrice).toBe(4_500_000);
+    expect((await call<Device>('GET', `/devices/${byOwner.data._id}`, { token: staff.token })).data).not.toHaveProperty('costPrice');
 
     const byStaff = await addDevice(staff.token, newDevice(mainBranch, { costPrice: 100 }));
     expect(byStaff.data).not.toHaveProperty('costPrice');
@@ -65,6 +67,10 @@ describe.skipIf(!hasDatabase)('inventory', () => {
     const staffIds = (await call<Page<Device>>('GET', '/devices', { token: staff.token })).data.items.map((d) => d._id);
     expect(staffIds).toContain(atSecond.data._id);
     expect(staffIds).not.toContain(atMain.data._id);
+    expect((await call('GET', `/devices/${atMain.data._id}`, { token: staff.token })).status).toBe(404);
+    expect((await call('GET', `/devices/${atSecond.data._id}`, { token: staff.token })).status).toBe(200);
+    const otherShop = await signupOrg('Other Shop');
+    expect((await call('GET', `/devices/${atSecond.data._id}`, { token: otherShop.token })).status).toBe(404);
     expect((await call('GET', `/devices?branchId=${mainBranch}`, { token: staff.token })).status).toBe(403);
 
     const ownerSecond = await call<Page<Device>>('GET', `/devices?branchId=${secondBranch}`, { token: shop.token });
