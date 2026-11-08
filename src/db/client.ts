@@ -13,13 +13,7 @@ mongoose.set('transactionAsyncLocalStorage', true); // every query inside withTr
 
 export async function connectDb() {
   if (mongoose.connection.readyState === connected) return;
-  await mongoose.connect(env.MONGODB_URI, {
-    dbName: env.MONGODB_DB,
-    appName: 'shop-portal',
-    retryWrites: false,
-    writeConcern: { w: 'majority' },
-    serverSelectionTimeoutMS: 10_000,
-  });
+  await mongoose.connect(env.MONGODB_URI);
 }
 
 export const closeDb = () => mongoose.disconnect();
