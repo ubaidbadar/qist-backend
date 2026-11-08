@@ -16,7 +16,7 @@ export async function connectDb() {
   await mongoose.connect(env.MONGODB_URI, {
     dbName: env.MONGODB_DB,
     appName: 'shop-portal',
-    retryWrites: true,
+    retryWrites: false,
     writeConcern: { w: 'majority' },
     serverSelectionTimeoutMS: 10_000,
   });
