@@ -1,4 +1,4 @@
-import { customerCreateSchema, customerListQuerySchema, customerUpdateSchema, normalizeMobile } from '@shop/shared';
+import { customerCreateSchema, customerListQuerySchema, customerUpdateSchema, normalizeMobile, pageQuerySchema } from '@shop/shared';
 import type { Types } from 'mongoose';
 import { withTransaction } from '../db/transaction';
 import { recordAudit } from '../lib/audit';
@@ -117,4 +117,17 @@ export const remove = authedController.createHandlers(async (c) => {
     await recordAudit(auth, { action: 'customer.deleted', entity: 'customer', entityId: existing._id, branchId: existing.homeBranchId, summary: `Deleted customer ${existing.fullName}` });
   });
   return c.json({ data: { ok: true } });
+});
+
+
+/** GET /customers/:id/overview: profile and a bounded page of contracts in one response. */
+export const overview = authedController.createHandlers(validate('query', pageQuerySchema), async (c) => {
+  const { auth } = c.var;
+  const customerId = parseId(c.req.param('id'), 'Customer');
+  const [customer, contracts] = await Promise.all([
+    findCustomer(auth, String(customerId)),
+    paginate(Contract.find({ orgId: auth.orgId, customerId })
+      .populate({ path: 'branch', select: 'name', match: { orgId: auth.orgId } }).lean(), c.req.valid('query')),
+  ]);
+  return c.json({ data: { customer, contracts } });
 });

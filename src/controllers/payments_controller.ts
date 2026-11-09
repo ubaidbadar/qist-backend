@@ -105,6 +105,10 @@ export const collections = authedController.createHandlers(validate('query', col
   const { auth } = c.var;
   const { branchId, date } = c.req.valid('query');
   if (branchId && !worksAt(auth, branchId)) throw new ForbiddenError("You don't work at that branch");
+  return c.json({ data: await loadCollections(auth, date, branchId) });
+});
+
+async function loadCollections(auth: AuthUser, date: string, branchId?: string) {
   const scope = scopeFilter(auth);
   const match = { ...scope, receivedOn: date, voidedAt: null, ...(branchId ? { branchId: new Types.ObjectId(branchId) } : {}) };
 
@@ -118,16 +122,14 @@ export const collections = authedController.createHandlers(validate('query', col
       },
     },
   ]);
-  return c.json({
-    data: {
+  return {
       date,
       total: result?.total[0]?.total ?? 0,
       count: result?.total[0]?.count ?? 0,
       byMethod: result?.byMethod.map(({ _id, ...rest }) => ({ method: _id, ...rest })) ?? [],
       byStaff: result?.byStaff.map(({ _id, ...rest }) => ({ userId: String(_id), ...rest })) ?? [],
-    },
-  });
-});
+  };
+}
 
 /** POST /payments/:id/void: reverses a payment's allocations; the payment itself is kept, marked void. */
 export const voidPayment = authedController.createHandlers(validate('json', paymentVoidSchema), async (c) => {
@@ -159,4 +161,18 @@ export const voidPayment = authedController.createHandlers(validate('json', paym
   const updated = await findPayment(auth, paymentId);
   if (updated) await notifyCustomerChange(auth.orgId, updated.customerId, updated.contractId, 'payment_voided', `void:${updated._id}`);
   return c.json({ data: updated });
+});
+
+
+/** GET /payments/overview: daily totals and cursor-paged receipts, including voided rows. */
+export const overview = authedController.createHandlers(validate('query', paymentListQuerySchema.extend({ date: collectionsQuerySchema.shape.date })), async (c) => {
+  const { auth } = c.var;
+  const { branchId, date, ...page } = c.req.valid('query');
+  if (branchId && !worksAt(auth, branchId)) throw new ForbiddenError("You don't work at that branch");
+  const filter = { ...scopeFilter(auth), receivedOn: date, ...(branchId ? { branchId } : {}) };
+  const [payments, collections] = await Promise.all([
+    paginate(Payment.find(filter).populate(withBranch(auth.orgId)).lean(), page),
+    loadCollections(auth, date, branchId),
+  ]);
+  return c.json({ data: { ...payments, collections } });
 });

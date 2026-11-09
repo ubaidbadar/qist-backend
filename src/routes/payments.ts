@@ -5,5 +5,6 @@ import { requirePermission } from '../middleware/require_permission';
 export const paymentRoutes = authedRouter()
   .get('/', ...payments.list)
   .get('/collections', ...payments.collections)
+  .get('/overview', ...payments.overview)
   .get('/:id', ...payments.show)
   .post('/:id/void', requirePermission('payments.void'), ...payments.voidPayment);
