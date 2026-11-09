@@ -6,6 +6,7 @@ import { requirePermission } from '../middleware/require_permission';
 export const userRoutes = authedRouter()
   .use(requirePermission('team.manage'))
   .get('/', ...users.list)
+  .get('/overview', ...users.overview)
   .post('/', ...users.create)
   .patch('/:id', ...users.update)
   .patch('/:id/active', ...users.setActive)

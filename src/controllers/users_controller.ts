@@ -132,3 +132,14 @@ export const issueTemporaryPassword = authedController.createHandlers(async (c) 
   });
   return c.json({ data: { user, temporaryPassword: password } });
 });
+
+
+/** GET /users/overview: the team and assignable/inactive branch labels together. */
+export const overview = authedController.createHandlers(async (c) => {
+  const { orgId } = c.var.auth;
+  const [members, branches] = await Promise.all([
+    User.find({ orgId }).sort({ role: 1, fullName: 1 }).lean(),
+    Branch.find({ orgId }).sort({ name: 1 }).lean(),
+  ]);
+  return c.json({ data: { members, branches } });
+});
