@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { ContractWithSchedule, Customer, CustomerAppOverview, CustomerAppPayment, CustomerAppSession, Device, Page } from '@shop/shared';
-import { addDays, todayInShops } from '@shop/shared';
+import { addDays, todayInShops, type DeviceCredential, type DeviceCustomerAuthHandoff, type EnrollmentTicket } from '@shop/shared';
 import { Types } from 'mongoose';
+import { randomBytes } from 'node:crypto';
 import { CustomerAccount } from '../src/models/customer_account';
 import { Org } from '../src/models/org';
 import { CustomerNotification } from '../src/models/customer_notification';
@@ -47,6 +48,56 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     return session.data.accessToken;
   }
   const overview = (token: string, query = '') => call<CustomerAppOverview>('GET', '/customer-app/overview' + query, { token });
+
+  test('enrolled lock app gives the same-phone customer app a single-use sign-in handoff', async () => {
+    const { phone, shop, device } = await buyer();
+    const enrollment = await call<EnrollmentTicket>('POST', `/devices/${device!._id}/enrollment`, { token: shop.token });
+    expect(enrollment.status).toBe(201);
+    const credential = await call<DeviceCredential>('POST', '/device/enroll', { body: { token: enrollment.data.token } });
+    expect(credential.status).toBe(201);
+
+    const nonce = randomBytes(32).toString('base64url');
+    const issue = await call<DeviceCustomerAuthHandoff>('POST', '/device/customer-auth/issue', {
+      token: credential.data.token,
+      body: { nonce },
+    });
+    expect(issue.status).toBe(200);
+    expect(issue.data.ticket).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    const wrongNonce = randomBytes(32).toString('base64url');
+    expect((await call('POST', '/customer-app/auth/device/exchange', {
+      body: { ticket: issue.data.ticket, nonce: wrongNonce },
+    })).status).toBe(401);
+
+    const firstLogin = await call<{ next: string; phone: string; setupToken: string }>('POST', '/customer-app/auth/device/exchange', {
+      body: { ticket: issue.data.ticket, nonce },
+    });
+    expect(firstLogin.status).toBe(200);
+    expect(firstLogin.data).toMatchObject({ next: 'password', phone });
+    expect(firstLogin.data.setupToken).toBeTruthy();
+
+    const saved = await call<CustomerAppSession>('POST', '/customer-app/auth/set-password', {
+      body: { phone, setupToken: firstLogin.data.setupToken, password: PASSWORD },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.data.accessToken).toBeTruthy();
+
+    expect((await call('POST', '/customer-app/auth/device/exchange', {
+      body: { ticket: issue.data.ticket, nonce },
+    })).status).toBe(401);
+
+    const nextNonce = randomBytes(32).toString('base64url');
+    const nextIssue = await call<DeviceCustomerAuthHandoff>('POST', '/device/customer-auth/issue', {
+      token: credential.data.token,
+      body: { nonce: nextNonce },
+    });
+    const nextLogin = await call<CustomerAppSession & { next: string }>('POST', '/customer-app/auth/device/exchange', {
+      body: { ticket: nextIssue.data.ticket, nonce: nextNonce },
+    });
+    expect(nextLogin.status).toBe(200);
+    expect(nextLogin.data.next).toBe('session');
+    expect(nextLogin.data.accessToken).toBeTruthy();
+  });
 
   test('verified WhatsApp setup, phone/password login and one-aggregate overview use real records', async () => {
     const { phone, contract } = await buyer();

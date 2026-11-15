@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomInt, randomBytes, timingSafeEqual } from 'node:crypto';
-import { customerLoginSchema, customerOverviewQuerySchema, customerPaymentsQuerySchema, customerRecoverySchema, customerResetSchema, customerVerifyCodeSchema, customerSetPasswordSchema, customerPushSchema, customerReadNotificationsSchema } from '@shop/shared';
+import { customerLoginSchema, customerOverviewQuerySchema, customerPaymentsQuerySchema, customerRecoverySchema, customerCodeRequestSchema, customerDeviceAuthExchangeSchema, customerResetSchema, customerVerifyCodeSchema, customerSetPasswordSchema, customerPushSchema, customerReadNotificationsSchema } from '@shop/shared';
 import { mongo, Types } from 'mongoose';
 import { env } from '../config/env';
 import { loadCustomerOverview, loadCustomerPayments } from '../lib/customer_data';
@@ -9,10 +9,12 @@ import { customerAppController, publicController } from '../lib/factory';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../lib/passwords';
 import { validate } from '../lib/validate';
 import { requireWhatsApp, sendWhatsAppCode } from '../lib/whatsapp';
+import { cancelDeviceCustomerAuthCode, sendDeviceCustomerAuthCode } from '../lib/push';
 import { Customer } from '../models/customer';
 import { CustomerNotification } from '../models/customer_notification';
 import { CustomerPushToken } from '../models/customer_push_token';
 import { CustomerAccount } from '../models/customer_account';
+import { CustomerAuthHandoff } from '../models/customer_auth_handoff';
 
 const HOUR = 60 * 60 * 1000;
 const RESET_TTL = 5 * 60 * 1000;
@@ -60,16 +62,78 @@ async function registeredPhone(phone: string, requirePlan = false) {
   return rows.length > 0;
 }
 
+/** Enrolled devices eligible to receive a sign-in code for this phone. */
+async function customerDevicePushTokens(phone: string): Promise<string[]> {
+  const rows = await Customer.aggregate<{ token: string }>([
+    { $match: { orgId: { $exists: true }, phone } },
+    {
+      $lookup: {
+        from: 'orgs',
+        localField: 'orgId',
+        foreignField: '_id',
+        pipeline: [{ $match: { status: 'active' } }, { $project: { _id: 1 } }],
+        as: 'org',
+      },
+    },
+    { $match: { 'org.0': { $exists: true } } },
+    {
+      $lookup: {
+        from: 'contracts',
+        let: { customerId: '$_id', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [
+            { $eq: ['$customerId', '$customerId'] },
+            { $eq: ['$orgId', '$orgId'] },
+            { $in: ['$status', ['active', 'defaulted', 'completed']] },
+          ] } } },
+          { $project: { deviceId: 1 } },
+        ],
+        as: 'contracts',
+      },
+    },
+    { $unwind: '$contracts' },
+    {
+      $lookup: {
+        from: 'devices',
+        let: { deviceId: '$contracts.deviceId', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [
+            { $eq: ['$_id', '$deviceId'] },
+            { $eq: ['$orgId', '$orgId'] },
+            { $ne: [{ $ifNull: ['$enrollment.pushToken', ''] }, ''] },
+            { $ne: [{ $ifNull: ['$enrollment.secretHash', null] }, null] },
+          ] } } },
+          { $project: { 'enrollment.pushToken': 1 } },
+        ],
+        as: 'device',
+      },
+    },
+    { $unwind: '$device' },
+    { $group: { _id: '$device.enrollment.pushToken' } },
+    { $limit: 10 },
+    { $project: { _id: 0, token: '$_id' } },
+  ]);
+  return [...new Set(rows.map((row) => row.token).filter((token): token is string => typeof token === 'string' && token.length > 0))];
+}
+
 /** Shared delivery/cooldown boundary for first setup and recovery. No blind resend retries. */
-async function issueCode(phone: string, strict: boolean) {
-  requireWhatsApp();
+async function issueCode(phone: string, strict: boolean, channel: 'auto' | 'device' | 'whatsapp' = 'auto') {
+  const deviceTokens = channel === 'whatsapp' ? [] : await customerDevicePushTokens(phone);
+  if (channel === 'device' && deviceTokens.length === 0) {
+    throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'No enrolled Qist Locker is available. Use WhatsApp instead.');
+  }
+  if (channel === 'whatsapp' || (channel === 'auto' && deviceTokens.length === 0)) requireWhatsApp();
+
   const now = new Date();
   const hourAgo = new Date(now.getTime() - HOUR);
   const code = randomInt(1_000_000).toString().padStart(6, '0');
   const digest = resetDigest(phone, code);
+  const requestId = randomBytes(16).toString('hex');
+  const expiresAt = new Date(now.getTime() + RESET_TTL);
   const expiredWindow = { $lte: [{ $ifNull: ['$resetWindowStart', new Date(0)] }, hourAgo] };
+  let previousRequestId: string | undefined;
   try {
-    await CustomerAccount.findOneAndUpdate({
+    const previous = await CustomerAccount.findOneAndUpdate({
       phone, $and: [
         { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
         { $or: [{ 'reset.attempts': { $lt: 5 } }, { 'reset.expiresAt': { $lte: now } }, { reset: null }] },
@@ -77,33 +141,51 @@ async function issueCode(phone: string, strict: boolean) {
       ]
     }, [{
       $set: {
-        phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt: new Date(now.getTime() + RESET_TTL), attempts: 0 } },
+        phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt, attempts: 0, requestId } },
         setup: '$$REMOVE', lastResetSentAt: now,
         resetWindowStart: { $cond: [expiredWindow, now, '$resetWindowStart'] },
         resetSentCount: { $cond: [expiredWindow, 1, { $add: [{ $ifNull: ['$resetSentCount', 0] }, 1] }] },
         tokenVersion: { $ifNull: ['$tokenVersion', 0] }, sessions: { $ifNull: ['$sessions', []] },
         createdAt: { $ifNull: ['$createdAt', now] }, updatedAt: now,
       }
-    }], { upsert: true, updatePipeline: true });
+    }], { upsert: true, updatePipeline: true }).select('+reset').lean();
+    previousRequestId = previous?.reset?.requestId ?? undefined;
   } catch (err) {
     if (!(err instanceof mongo.MongoServerError && err.code === 11000)) throw err;
-    if (!strict) return 60;
+    if (!strict) return { retryAfterSeconds: 60, delivery: 'whatsapp' as const };
     const account = await CustomerAccount.findOne({ phone }).select('+reset +lastResetSentAt +resetWindowStart +resetSentCount').lean();
     if (account?.reset && account.reset.expiresAt > now && account.reset.attempts >= 5) throw verificationLimit(account.reset.expiresAt, now);
     const cooldown = Math.max(1, Math.ceil(((account?.lastResetSentAt?.getTime() ?? now.getTime()) + 60_000 - now.getTime()) / 1000));
     const hourly = account && account.resetSentCount >= 5 && account.resetWindowStart
       ? Math.max(0, Math.ceil((account.resetWindowStart.getTime() + HOUR - now.getTime()) / 1000)) : 0;
-    if (account?.reset && account.reset.expiresAt > now && account.reset.attempts < 5) return Math.max(cooldown, hourly);
+    if (account?.reset && account.reset.expiresAt > now && account.reset.attempts < 5) {
+      return { retryAfterSeconds: Math.max(cooldown, hourly), delivery: 'whatsapp' as const };
+    }
     throw new RateLimitError(Math.max(cooldown, hourly));
   }
-  try { await sendWhatsAppCode(phone, code); }
-  catch (err) {
-    // @ts-ignore
-    console.log({ ...err })
+
+  try {
+    let delivery: 'device' | 'whatsapp' = 'whatsapp';
+    const cancelTokens = deviceTokens.length > 0 ? deviceTokens : previousRequestId ? await customerDevicePushTokens(phone) : [];
+    if (previousRequestId) {
+      await Promise.all(cancelTokens.map((token) => cancelDeviceCustomerAuthCode(token, previousRequestId!)));
+    }
+    if (deviceTokens.length > 0) {
+      const results = await Promise.all(deviceTokens.map((token) => sendDeviceCustomerAuthCode(token, requestId, code, expiresAt)));
+      if (results.some(Boolean)) delivery = 'device';
+      else if (channel === 'device') {
+        throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'Qist could not reach your financed phone. Try WhatsApp instead.');
+      }
+    }
+    if (delivery === 'whatsapp') {
+      requireWhatsApp();
+      await sendWhatsAppCode(phone, code);
+    }
+    return { retryAfterSeconds: 60, delivery };
+  } catch (err) {
     await CustomerAccount.updateOne({ phone, 'reset.digest': digest }, { $set: { 'reset.expiresAt': now } });
     throw err;
   }
-  return 60;
 }
 
 export const start = publicController.createHandlers(validate('json', customerRecoverySchema), async (c) => {
@@ -112,14 +194,15 @@ export const start = publicController.createHandlers(validate('json', customerRe
   if (!await registeredPhone(phone, true)) return c.json({ data: { next: 'unregistered' as const } });
   const account = await CustomerAccount.findOne({ phone }).select('+passwordHash').lean();
   if (account?.passwordHash) return c.json({ data: { next: 'password' as const } });
-  return c.json({ data: { next: 'otp' as const, retryAfterSeconds: await issueCode(phone, true) } });
+  const issued = await issueCode(phone, true);
+  return c.json({ data: { next: 'otp' as const, ...issued } });
 });
 
-export const requestCode = publicController.createHandlers(validate('json', customerRecoverySchema), async (c) => {
+export const requestCode = publicController.createHandlers(validate('json', customerCodeRequestSchema), async (c) => {
   c.header('Cache-Control', 'no-store');
-  const { phone } = c.req.valid('json');
+  const { phone, channel } = c.req.valid('json');
   if (!await registeredPhone(phone, true)) throw new ValidationError('No plan is linked to this number. Contact your retailer.');
-  return c.json({ data: { retryAfterSeconds: await issueCode(phone, true) } });
+  return c.json({ data: await issueCode(phone, true, channel) });
 });
 
 export const requestReset = publicController.createHandlers(validate('json', customerRecoverySchema), async (c) => {
@@ -139,7 +222,7 @@ export const verifyCode = publicController.createHandlers(validate('json', custo
   c.header('Cache-Control', 'no-store');
   const { phone, code } = c.req.valid('json');
   const now = new Date();
-  const invalid = () => new AppError('OTP_CODE_EXPIRED', 400, 'The code has expired. Request a new WhatsApp code.');
+  const invalid = () => new AppError('OTP_CODE_EXPIRED', 400, 'The code has expired. Request a new code.');
   const account = await CustomerAccount.findOneAndUpdate(
     { phone, 'reset.expiresAt': { $gt: now }, 'reset.attempts': { $lt: 5 } },
     { $inc: { 'reset.attempts': 1 } }, { returnDocument: 'before' },
@@ -171,7 +254,7 @@ export const setPassword = publicController.createHandlers(validate('json', cust
   const digest = setupDigest(phone, setupToken);
   // Reject expired/random proofs before expensive password hashing; the write below also enforces single use.
   const account = await CustomerAccount.findOne({ phone, 'setup.digest': digest, 'setup.expiresAt': { $gt: new Date() } }).select('+tokenVersion').lean();
-  if (!account) throw new ValidationError('Verification expired. Request a new WhatsApp code.');
+  if (!account) throw new ValidationError('Verification expired. Sign in again on your enrolled phone or request a new code.');
   const passwordHash = await hashPassword(password);
   const id = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_MS);
@@ -204,6 +287,60 @@ export const resetPassword = publicController.createHandlers(validate('json', cu
   );
   if (updated.modifiedCount !== 1) throw invalid();
   return c.json({ data: { ok: true } });
+});
+
+/** Exchange a one-use proof created by the enrolled locker into a customer session or first-password proof. */
+export const exchangeDeviceHandoff = publicController.createHandlers(validate('json', customerDeviceAuthExchangeSchema), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const { ticket, nonce } = c.req.valid('json');
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  const now = new Date();
+
+  const handoff = await CustomerAuthHandoff.findOneAndUpdate(
+    { ticketHash: hash(ticket), nonceHash: hash(nonce), expiresAt: { $gt: now }, consumedAt: null },
+    { $set: { consumedAt: now } },
+    { returnDocument: 'after' },
+  ).lean();
+  if (!handoff) throw new UnauthorizedError('This device sign-in request has expired. Please try again.');
+
+  const account = await CustomerAccount.findOneAndUpdate(
+    { phone: handoff.phone },
+    { $setOnInsert: { phone: handoff.phone } },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  ).select('+passwordHash +tokenVersion').lean().catch(async (error: unknown) => {
+    if (!(error instanceof mongo.MongoServerError && error.code === 11000)) throw error;
+    return CustomerAccount.findOne({ phone: handoff.phone }).select('+passwordHash +tokenVersion').lean();
+  });
+  if (!account) throw new UnauthorizedError('Please try signing in again.');
+
+  if (account.passwordHash) {
+    const id = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_MS);
+    const updated = await CustomerAccount.findOneAndUpdate(
+      { _id: account._id, tokenVersion: account.tokenVersion, passwordHash: account.passwordHash },
+      { $push: { sessions: { $each: [{ id, expiresAt }], $slice: -5 } } },
+      { returnDocument: 'after' },
+    ).select('_id +tokenVersion').lean();
+    if (!updated) throw new UnauthorizedError('Please try signing in again.');
+    return c.json({
+      data: {
+        next: 'session' as const,
+        accessToken: await signCustomerToken({ sub: String(updated._id), ver: updated.tokenVersion, sid: id }, expiresAt),
+        expiresAt: expiresAt.toISOString(),
+      },
+    });
+  }
+
+  const setupToken = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + RESET_TTL);
+  const updated = await CustomerAccount.findOneAndUpdate(
+    { _id: account._id, tokenVersion: account.tokenVersion, passwordHash: null },
+    { $set: { setup: { digest: setupDigest(handoff.phone, setupToken), expiresAt } }, $unset: { reset: 1 } },
+    { returnDocument: 'after' },
+  ).select('_id').lean();
+  if (!updated) throw new UnauthorizedError('Please try signing in again.');
+
+  return c.json({ data: { next: 'password' as const, phone: handoff.phone, setupToken, expiresAt: expiresAt.toISOString() } });
 });
 
 export const overview = customerAppController.createHandlers(validate('query', customerOverviewQuerySchema), async (c) => {
