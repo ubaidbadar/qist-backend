@@ -5,6 +5,7 @@ const resetSchema = new Schema({
   expiresAt: { type: Date, required: true },
   sentAt: { type: Date, required: true },
   attempts: { type: Number, default: 0 },
+  requestId: { type: String, default: null },
 }, { _id: false });
 const setupSchema = new Schema({ digest: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });
 const sessionSchema = new Schema({ id: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });

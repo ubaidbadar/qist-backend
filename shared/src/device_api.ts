@@ -24,6 +24,16 @@ export const deviceEnrollSchema = z.object({
 });
 export type DeviceEnrollInput = z.infer<typeof deviceEnrollSchema>;
 
+/** Locker → API: request a short-lived, single-use proof for the customer app on this same phone. */
+export const deviceCustomerAuthIssueSchema = z.object({
+  nonce: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid customer sign-in challenge'),
+});
+export type DeviceCustomerAuthIssueInput = z.infer<typeof deviceCustomerAuthIssueSchema>;
+export interface DeviceCustomerAuthHandoff {
+  ticket: string;
+  expiresAt: string;
+}
+
 /** Device app → server, on every check-in; all fields optional so an old app still checks in. */
 export const deviceCheckinSchema = z.object({
   customerApp: customerAppReportSchema.optional(),

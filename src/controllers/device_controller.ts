@@ -1,6 +1,8 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { notifyCustomerDeviceChange } from '../lib/customer_notifications';
 import {
   commandAckSchema,
+  deviceCustomerAuthIssueSchema,
   deviceCheckinSchema,
   deviceEnrollSchema,
   DEVICE_CHECKIN_SECONDS,
@@ -19,6 +21,8 @@ import { ConflictError, NotFoundError, UnauthorizedError } from '../lib/errors';
 import { createTokenFor, readSecretToken, secretMatches } from '../lib/tokens';
 import { validate } from '../lib/validate';
 import { Device } from '../models/device';
+import { Contract } from '../models/contract';
+import { CustomerAuthHandoff } from '../models/customer_auth_handoff';
 import { DeviceCommand } from '../models/device_command';
 
 /** Commands the phone still has to carry out, and that a check-in should deliver. */
@@ -89,6 +93,60 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
   });
 
   return c.json({ data: payload });
+});
+
+/** A same-device customer login ticket expires quickly and can be exchanged only once. */
+const CUSTOMER_AUTH_HANDOFF_TTL_MS = 60_000;
+const digestCustomerAuthValue = (value: string) => createHash('sha256').update(value).digest('hex');
+
+/** The enrolled locker requests a one-use ticket; its long-lived credential never crosses IPC. */
+export const issueCustomerAuthHandoff = deviceController.createHandlers(validate('json', deviceCustomerAuthIssueSchema), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const { device } = c.var;
+  const { nonce } = c.req.valid('json');
+
+  const [owner] = await Contract.aggregate<{ phone: string }>([
+    { $match: { orgId: device.orgId, deviceId: device._id, status: { $in: ['active', 'defaulted', 'completed'] } } },
+    { $sort: { _id: -1 } },
+    { $limit: 1 },
+    {
+      $lookup: {
+        from: 'customers',
+        let: { customerId: '$customerId', orgId: '$orgId' },
+        pipeline: [
+          { $match: { $expr: { $and: [{ $eq: ['$_id', '$customerId'] }, { $eq: ['$orgId', '$orgId'] }] } } },
+          { $project: { phone: 1 } },
+        ],
+        as: 'customer',
+      },
+    },
+    {
+      $lookup: {
+        from: 'orgs',
+        localField: 'orgId',
+        foreignField: '_id',
+        pipeline: [{ $match: { status: 'active' } }, { $project: { _id: 1 } }],
+        as: 'org',
+      },
+    },
+    { $match: { 'customer.0': { $exists: true }, 'org.0': { $exists: true } } },
+    { $project: { _id: 0, phone: { $arrayElemAt: ['$customer.phone', 0] } } },
+  ]);
+
+  if (!owner?.phone) throw new UnauthorizedError('This enrolled phone is not eligible for customer sign-in');
+
+  const ticket = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + CUSTOMER_AUTH_HANDOFF_TTL_MS);
+  await CustomerAuthHandoff.create({
+    ticketHash: digestCustomerAuthValue(ticket),
+    nonceHash: digestCustomerAuthValue(nonce),
+    phone: owner.phone,
+    orgId: device.orgId,
+    deviceId: device._id,
+    expiresAt,
+  });
+
+  return c.json({ data: { ticket, expiresAt: expiresAt.toISOString() } });
 });
 
 /** The lock state a carried-out command leaves the phone in. */

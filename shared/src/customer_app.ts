@@ -7,10 +7,32 @@ import type { Page } from './api';
 
 export const customerLoginSchema = z.object({ phone: mobileSchema, password: passwordSchema });
 export const customerRecoverySchema = z.object({ phone: mobileSchema });
+export const customerCodeRequestSchema = customerRecoverySchema.extend({
+  channel: z.enum(['auto', 'device', 'whatsapp']).default('auto'),
+});
+export type CustomerCodeRequest = z.infer<typeof customerCodeRequestSchema>;
+
+const deviceHandoffTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid device sign-in proof');
+export const customerDeviceAuthExchangeSchema = z.object({
+  ticket: deviceHandoffTokenSchema,
+  nonce: deviceHandoffTokenSchema,
+});
+export interface CustomerDeviceAuthSession {
+  next: 'session';
+  accessToken: string;
+  expiresAt: string;
+}
+export interface CustomerDeviceAuthPasswordSetup {
+  next: 'password';
+  phone: string;
+  setupToken: string;
+  expiresAt: string;
+}
+export type CustomerDeviceAuthResponse = CustomerDeviceAuthSession | CustomerDeviceAuthPasswordSetup;
 export const customerVerifyCodeSchema = customerRecoverySchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
 export const customerSetPasswordSchema = customerLoginSchema.extend({ setupToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Verify your WhatsApp code again') });
 export interface CustomerAppConfig { maintenance: boolean }
-export interface CustomerAuthStart { next: 'password' | 'otp' | 'unregistered'; retryAfterSeconds?: number }
+export interface CustomerAuthStart { next: 'password' | 'otp' | 'unregistered'; retryAfterSeconds?: number; delivery?: 'device' | 'whatsapp' }
 export interface CustomerSetupProof { setupToken: string; expiresAt: string }
 export const customerResetSchema = customerLoginSchema.extend({ code: z.string().regex(/^\d{6}$/, 'Enter the six-digit WhatsApp code') });
 export const customerOverviewQuerySchema = z.object({ contractId: objectIdSchema.optional() });
