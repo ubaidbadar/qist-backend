@@ -67,6 +67,7 @@ export async function loadMe(userId: Types.ObjectId, orgId: Types.ObjectId): Pro
           role: '$role',
           branchIds: '$branchIds',
           active: '$active',
+          googleLinked: { $ne: [{ $ifNull: ['$googleSub', null] }, null] },
           emailVerifiedAt: '$emailVerifiedAt',
           mustChangePassword: '$mustChangePassword',
           lastLoginAt: '$lastLoginAt',

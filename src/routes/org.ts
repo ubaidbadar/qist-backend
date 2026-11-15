@@ -5,5 +5,6 @@ import { requirePermission } from '../middleware/require_permission';
 export const orgRoutes = authedRouter()
   .get('/', ...org.show)
   .patch('/', requirePermission('org.manage'), ...org.update)
+  .patch('/logo', requirePermission('org.manage'), ...org.updateLogo)
   .patch('/payment-methods', requirePermission('org.manage'), ...org.updatePaymentMethods)
   .patch('/policy', requirePermission('org.manage'), ...org.updatePolicy);

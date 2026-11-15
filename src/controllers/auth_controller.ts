@@ -56,22 +56,9 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
     if (!user.active) throw new ForbiddenError('Your account has been deactivated. Ask the shop owner to reactivate it.');
 
     if (!user.googleSub) {
-      const linked = await User.findOneAndUpdate(
-        {
-          _id: user._id,
-          orgId: user.orgId,
-          $or: [{ googleSub: { $exists: false } }, { googleSub: null }, { googleSub: identity.googleSub }],
-        },
-        { $set: { googleSub: identity.googleSub, emailVerifiedAt: new Date(), lastLoginAt: new Date() } },
-        { returnDocument: 'after' },
-      )
-        .select('+googleSub +tokenVersion')
-        .lean();
-
-      if (!linked || linked.googleSub !== identity.googleSub) {
-        throw new ConflictError('This Qist account was linked to another Google account. Please sign in using your existing method.');
-      }
-      user = linked;
+      // A matching email is not proof that the Google account controls an existing Qist session.
+      // The owner must first sign in with Qist and explicitly connect Google from their account.
+      throw new ConflictError('This email already has a Qist account. Sign in with your existing password, then connect Google from your account menu.');
     }
 
     return sendSession(c, user);

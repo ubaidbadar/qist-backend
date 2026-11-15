@@ -11,6 +11,7 @@ export const show = publicController.createHandlers(async (c) => {
 
   c.header('Content-Type', logo.contentType);
   c.header('X-Content-Type-Options', 'nosniff');
+  // The browser uses this from the Firebase portal, a different site from the API.
   c.header('Cache-Control', 'public, max-age=86400');
   return c.body(Uint8Array.from(logo.data));
 });

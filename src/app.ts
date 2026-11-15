@@ -22,6 +22,12 @@ export function createApp() {
   app.use(requestLogger);
   // Before the secure headers: the page styles itself inline, which the API's `default-src 'none'` would block.
   if (env.NODE_ENV !== 'production') app.route('/docs', docsRoutes);
+  // Public shop logos are displayed by a separate Firebase-hosted origin. Apply the
+  // response override outside secureHeaders so its default same-origin CORP cannot block images.
+  app.use('/api/v1/public/orgs/*', async (c, next) => {
+    await next();
+    c.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  });
   app.use(secureHeaders({ contentSecurityPolicy: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } }));
   app.use(
     '/api/*',
