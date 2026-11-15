@@ -98,6 +98,8 @@ async function issueCode(phone: string, strict: boolean) {
   }
   try { await sendWhatsAppCode(phone, code); }
   catch (err) {
+    // @ts-ignore
+    console.log({ ...err })
     await CustomerAccount.updateOne({ phone, 'reset.digest': digest }, { $set: { 'reset.expiresAt': now } });
     throw err;
   }
@@ -109,9 +111,7 @@ export const start = publicController.createHandlers(validate('json', customerRe
   const { phone } = c.req.valid('json');
   if (!await registeredPhone(phone, true)) return c.json({ data: { next: 'unregistered' as const } });
   const account = await CustomerAccount.findOne({ phone }).select('+passwordHash').lean();
-  console.log(account, 112);
   if (account?.passwordHash) return c.json({ data: { next: 'password' as const } });
-  console.log("account", 114);
   return c.json({ data: { next: 'otp' as const, retryAfterSeconds: await issueCode(phone, true) } });
 });
 
