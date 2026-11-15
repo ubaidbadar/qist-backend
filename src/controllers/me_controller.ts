@@ -68,6 +68,9 @@ export const changePassword = authedController.createHandlers(validate('json', c
   const { currentPassword, newPassword } = c.req.valid('json');
   const user = await User.findOne({ _id: auth._id, orgId: auth.orgId }).select('+passwordHash').lean();
   if (!user) throw new UnauthorizedError();
+  if (user.passwordEnabled === false) {
+    throw new ValidationError('To set a password for your Google account, use Forgot password on the sign-in page.');
+  }
   if (!(await verifyPassword(currentPassword, user.passwordHash))) {
     throw new ValidationError('Your current password is incorrect', fieldDetails('currentPassword', 'Incorrect password'));
   }

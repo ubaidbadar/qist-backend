@@ -44,7 +44,7 @@ export const resetPassword = publicController.createHandlers(validate('json', re
 
     await User.updateOne(
       { _id: user._id, orgId: user.orgId },
-      { $set: { passwordHash, mustChangePassword: false }, $inc: { tokenVersion: 1 } },
+      { $set: { passwordHash, passwordEnabled: true, mustChangePassword: false }, $inc: { tokenVersion: 1 } },
     );
     await revokeAllSessions(user._id);
     await recordAudit(user, { action: 'user.password_reset', entity: 'user', entityId: user._id, summary: 'Reset their password by email' });
