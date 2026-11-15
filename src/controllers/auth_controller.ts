@@ -142,24 +142,30 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
 /** POST /auth/signup: creates the organization, its first branch and the owner, then signs the owner in. */
 export const signup = publicController.createHandlers(validate('json', signupSchema), async (c) => {
   const input = c.req.valid('json');
-  if (await acrossTenants(User.exists({ email: input.email }))) {
-    throw new ConflictError('An account with this email already exists', fieldDetails('email', 'Already registered'));
-  }
   const passwordHash = await hashPassword(input.password);
 
-  const owner = await withTransaction(async () => {
-    const org = await Org.create({ name: input.orgName });
-    const branch = await Branch.create({ orgId: org._id, name: input.branchName });
-    const user = await User.create({ orgId: org._id, passwordHash, fullName: input.fullName, email: input.email, role: 'owner' });
-    await recordAudit(user, {
-      action: 'org.created',
-      entity: 'org',
-      entityId: org._id,
-      branchId: branch._id,
-      summary: 'Created a retailer account using email and password',
+  let owner;
+  try {
+    owner = await withTransaction(async () => {
+      const org = await Org.create({ name: input.orgName });
+      const branch = await Branch.create({ orgId: org._id, name: input.branchName });
+      const user = await User.create({ orgId: org._id, passwordHash, fullName: input.fullName, email: input.email, role: 'owner' });
+      await recordAudit(user, {
+        action: 'org.created',
+        entity: 'org',
+        entityId: org._id,
+        branchId: branch._id,
+        summary: 'Created a retailer account using email and password',
+      });
+      return user;
     });
-    return user;
-  });
+  } catch (error) {
+    // The unique email index is the source of truth; avoid a separate preflight read and handle signup races.
+    if (isDuplicateKeyError(error)) {
+      throw new ConflictError('An account with this email already exists', fieldDetails('email', 'Already registered'));
+    }
+    throw error;
+  }
 
   await sendVerificationEmail(owner);
   return sendSession(c, owner, 201);
