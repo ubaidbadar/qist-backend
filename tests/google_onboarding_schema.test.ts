@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { googleLinkSchema, googleAuthSchema, googleOnboardingSchema, orgLogoUpdateSchema } from '@shop/shared';
+import { googleLinkSchema, googleAuthSchema, googleOnboardingSchema, loginSchema, orgLogoUpdateSchema } from '@shop/shared';
 import { User } from '../src/models/user';
 
 describe('Google sign-in and retailer onboarding contracts', () => {
@@ -23,6 +23,11 @@ describe('Google sign-in and retailer onboarding contracts', () => {
     expect(googleOnboardingSchema.safeParse({ ...valid, fullName: '' }).success).toBe(false);
     expect(googleOnboardingSchema.safeParse({ ...valid, confirmPassword: 'different password' }).success).toBe(false);
     expect(googleOnboardingSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
+  });
+
+  test('staff sign-in accepts email and password, never a branch phone number', () => {
+    expect(loginSchema.safeParse({ email: 'owner@example.com', password: 'correct horse battery' }).success).toBe(true);
+    expect(loginSchema.safeParse({ email: '03001234567', password: 'correct horse battery' }).success).toBe(false);
   });
 
   test('removing a logo requires explicit null', () => {
