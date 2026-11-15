@@ -46,10 +46,14 @@ async function registeredPhone(phone: string, requirePlan = false) {
     { $lookup: { from: 'orgs', localField: 'orgId', foreignField: '_id', pipeline: [{ $match: { status: 'active' } }, { $project: { _id: 1 } }], as: 'org' } },
     { $match: { 'org.0': { $exists: true } } },
     ...(requirePlan ? [
-      { $lookup: { from: 'contracts', let: { customer: '$_id', org: '$orgId' }, pipeline: [
-        { $match: { status: { $in: ['active', 'defaulted', 'completed'] }, $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
-        { $limit: 1 }, { $project: { _id: 1 } },
-      ], as: 'plans' } }, { $match: { 'plans.0': { $exists: true } } },
+      {
+        $lookup: {
+          from: 'contracts', let: { customer: '$_id', org: '$orgId' }, pipeline: [
+            { $match: { status: { $in: ['active', 'defaulted', 'completed'] }, $expr: { $and: [{ $eq: ['$customerId', '$$customer'] }, { $eq: ['$orgId', '$$org'] }] } } },
+            { $limit: 1 }, { $project: { _id: 1 } },
+          ], as: 'plans'
+        }
+      }, { $match: { 'plans.0': { $exists: true } } },
     ] : []),
     { $limit: 1 }, { $project: { _id: 1 } },
   ]);
@@ -65,18 +69,22 @@ async function issueCode(phone: string, strict: boolean) {
   const digest = resetDigest(phone, code);
   const expiredWindow = { $lte: [{ $ifNull: ['$resetWindowStart', new Date(0)] }, hourAgo] };
   try {
-    await CustomerAccount.findOneAndUpdate({ phone, $and: [
-      { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
-      { $or: [{ 'reset.attempts': { $lt: 5 } }, { 'reset.expiresAt': { $lte: now } }, { reset: null }] },
-      { $or: [{ resetWindowStart: { $lte: hourAgo } }, { resetWindowStart: null }, { resetSentCount: { $lt: 5 } }] },
-    ] }, [{ $set: {
-      phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt: new Date(now.getTime() + RESET_TTL), attempts: 0 } },
-      setup: '$$REMOVE', lastResetSentAt: now,
-      resetWindowStart: { $cond: [expiredWindow, now, '$resetWindowStart'] },
-      resetSentCount: { $cond: [expiredWindow, 1, { $add: [{ $ifNull: ['$resetSentCount', 0] }, 1] }] },
-      tokenVersion: { $ifNull: ['$tokenVersion', 0] }, sessions: { $ifNull: ['$sessions', []] },
-      createdAt: { $ifNull: ['$createdAt', now] }, updatedAt: now,
-    } }], { upsert: true, updatePipeline: true });
+    await CustomerAccount.findOneAndUpdate({
+      phone, $and: [
+        { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
+        { $or: [{ 'reset.attempts': { $lt: 5 } }, { 'reset.expiresAt': { $lte: now } }, { reset: null }] },
+        { $or: [{ resetWindowStart: { $lte: hourAgo } }, { resetWindowStart: null }, { resetSentCount: { $lt: 5 } }] },
+      ]
+    }, [{
+      $set: {
+        phone: { $literal: phone }, reset: { $literal: { digest, sentAt: now, expiresAt: new Date(now.getTime() + RESET_TTL), attempts: 0 } },
+        setup: '$$REMOVE', lastResetSentAt: now,
+        resetWindowStart: { $cond: [expiredWindow, now, '$resetWindowStart'] },
+        resetSentCount: { $cond: [expiredWindow, 1, { $add: [{ $ifNull: ['$resetSentCount', 0] }, 1] }] },
+        tokenVersion: { $ifNull: ['$tokenVersion', 0] }, sessions: { $ifNull: ['$sessions', []] },
+        createdAt: { $ifNull: ['$createdAt', now] }, updatedAt: now,
+      }
+    }], { upsert: true, updatePipeline: true });
   } catch (err) {
     if (!(err instanceof mongo.MongoServerError && err.code === 11000)) throw err;
     if (!strict) return 60;
@@ -101,7 +109,9 @@ export const start = publicController.createHandlers(validate('json', customerRe
   const { phone } = c.req.valid('json');
   if (!await registeredPhone(phone, true)) return c.json({ data: { next: 'unregistered' as const } });
   const account = await CustomerAccount.findOne({ phone }).select('+passwordHash').lean();
+  console.log(account, 112);
   if (account?.passwordHash) return c.json({ data: { next: 'password' as const } });
+  console.log("account", 114);
   return c.json({ data: { next: 'otp' as const, retryAfterSeconds: await issueCode(phone, true) } });
 });
 
@@ -227,8 +237,10 @@ export const deleteAccount = customerAppController.createHandlers(async (c) => {
 });
 
 async function activeCustomer(claims: { sub: string; ver: number; sid: string }) {
-  const account = await CustomerAccount.findOne({ _id: new Types.ObjectId(claims.sub), tokenVersion: claims.ver,
-    sessions: { $elemMatch: { id: claims.sid, expiresAt: { $gt: new Date() } } } }).select('+sessions').lean();
+  const account = await CustomerAccount.findOne({
+    _id: new Types.ObjectId(claims.sub), tokenVersion: claims.ver,
+    sessions: { $elemMatch: { id: claims.sid, expiresAt: { $gt: new Date() } } }
+  }).select('+sessions').lean();
   if (!account) throw new UnauthorizedError();
   return account;
 }
@@ -237,10 +249,12 @@ export const registerPush = customerAppController.createHandlers(validate('json'
   const { token } = c.req.valid('json');
   const hash = createHash('sha256').update(token).digest('hex');
   await CustomerPushToken.deleteMany({ accountId: account._id, sessionId: c.var.customer.sid, _id: { $ne: hash } });
-  await CustomerPushToken.updateOne({ _id: hash }, { $set: {
-    accountId: account._id, sessionId: c.var.customer.sid, token,
-    expiresAt: account.sessions.find((s) => s.id === c.var.customer.sid)!.expiresAt,
-  } }, { upsert: true });
+  await CustomerPushToken.updateOne({ _id: hash }, {
+    $set: {
+      accountId: account._id, sessionId: c.var.customer.sid, token,
+      expiresAt: account.sessions.find((s) => s.id === c.var.customer.sid)!.expiresAt,
+    }
+  }, { upsert: true });
   return c.json({ data: { ok: true } });
 });
 export const unregisterPush = customerAppController.createHandlers(async (c) => {
