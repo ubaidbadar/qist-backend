@@ -30,8 +30,9 @@ export const googleConfig = publicController.createHandlers(async (c) => {
 
 /**
  * POST /auth/google
- * Existing Google users sign in. Existing verified-email accounts are linked to the stable Google subject.
- * New users receive an onboarding response, then submit shop details to this same endpoint.
+ * Existing connected users sign in by Google's stable subject ID, never by email alone.
+ * Existing email/password users must explicitly connect Google while authenticated.
+ * New users receive an onboarding response, then submit shop details to this endpoint.
  */
 export const googleSignIn = publicController.createHandlers(validate('json', googleAuthSchema), async (c) => {
   const { credential, onboarding } = c.req.valid('json');
@@ -48,7 +49,7 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
     throw new ConflictError('This Google account and email are associated with different Qist accounts. Contact support before continuing.');
   }
 
-  let user = matches[0];
+  const user = matches[0];
   if (user) {
     if (user.googleSub && user.googleSub !== identity.googleSub) {
       throw new ConflictError('This email is already connected to a different Google account. Sign in using your existing method.');
