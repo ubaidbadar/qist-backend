@@ -9,6 +9,8 @@ const userSchema = new Schema(
     email: { type: String, required: true, trim: true, lowercase: true, unique: true },
     /** Never loaded unless asked for with `.select('+passwordHash')`. */
     passwordHash: { type: String, required: true, select: false },
+    /** False for Google-only accounts until the owner sets a password using an email reset link. */
+    passwordEnabled: { type: Boolean, default: true },
     /** Stable Google OpenID Connect subject; absent for legacy email/password-only accounts. */
     googleSub: { type: String, select: false },
     fullName: { type: String, required: true, trim: true },

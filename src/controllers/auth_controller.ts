@@ -91,6 +91,7 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
         email: identity.email,
         googleSub: identity.googleSub,
         passwordHash,
+        passwordEnabled: false,
         fullName: identity.fullName,
         role: 'owner',
         emailVerifiedAt: now,

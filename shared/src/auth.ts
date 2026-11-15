@@ -57,6 +57,11 @@ export const googleAuthSchema = z.object({
 });
 export type GoogleAuthInput = z.infer<typeof googleAuthSchema>;
 
+/** Existing users must authenticate to Qist before they link a Google identity. */
+export const googleLinkSchema = googleAuthSchema.pick({ credential: true });
+/** Explicit null deletes the logo; omission is never treated as a destructive request. */
+export const orgLogoUpdateSchema = z.object({ logo: orgLogoInputSchema.nullable() });
+
 export interface GoogleAuthConfig {
   enabled: boolean;
   clientId: string | null;
