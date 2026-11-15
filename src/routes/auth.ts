@@ -10,14 +10,19 @@ const AUTH_ATTEMPTS_PER_WINDOW = 20;
 /** Per-IP limit against password guessing, email flooding and Google credential abuse. */
 const limitAttempts = rateLimit({ windowMs: AUTH_WINDOW_MS, max: AUTH_ATTEMPTS_PER_WINDOW, enabled: env.NODE_ENV !== 'test' });
 
-/** Public: signing in and out, and the links sent by email. */
+/** Public sign-in routes. Retailer registration is only through Google plus the onboarding flow. */
 export const authRoutes = createRouter()
   .get('/google/config', ...auth.googleConfig)
   .post('/google', limitAttempts, ...auth.googleSignIn)
-  .post('/signup', limitAttempts, ...auth.signup)
   .post('/login', limitAttempts, ...auth.login)
   .post('/refresh', ...auth.refresh)
   .post('/logout', ...auth.logout)
   .post('/verify-email', limitAttempts, ...emailLinks.verifyEmail)
   .post('/forgot-password', limitAttempts, ...emailLinks.forgotPassword)
   .post('/reset-password', limitAttempts, ...emailLinks.resetPassword);
+
+// Keep the old email-signup endpoint only for isolated integration-test fixtures.
+// It is not exposed by development or production servers.
+if (env.NODE_ENV === 'test') {
+  authRoutes.post('/signup', limitAttempts, ...auth.signup);
+}

@@ -9,13 +9,20 @@ describe('Google sign-in and retailer onboarding contracts', () => {
     expect(googleAuthSchema.safeParse({ credential: 'a'.repeat(24) }).success).toBe(true);
   });
 
-  test('requires shop name, phone and address while keeping the logo optional', () => {
-    expect(googleOnboardingSchema.safeParse({
-      shopName: 'Al-Madina Mobiles', phone: '03001234567', address: 'Shop 12, Faisalabad',
-    }).success).toBe(true);
-    expect(googleOnboardingSchema.safeParse({
-      shopName: 'Al-Madina Mobiles', phone: '', address: 'Shop 12, Faisalabad',
-    }).success).toBe(false);
+  test('requires owner name, shop details and a matching password while keeping the logo optional', () => {
+    const valid = {
+      fullName: 'Ayesha Khan',
+      shopName: 'Al-Madina Mobiles',
+      phone: '03001234567',
+      address: 'Shop 12, Faisalabad',
+      password: 'correct horse battery',
+      confirmPassword: 'correct horse battery',
+    };
+    expect(googleOnboardingSchema.safeParse(valid).success).toBe(true);
+    expect(googleOnboardingSchema.safeParse({ ...valid, phone: '' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, fullName: '' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, confirmPassword: 'different password' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
   });
 
   test('removing a logo requires explicit null', () => {
