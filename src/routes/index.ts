@@ -14,10 +14,12 @@ import { orgRoutes } from './org';
 import { paymentRoutes } from './payments';
 import { planRoutes } from './plans';
 import { userRoutes } from './users';
+import { publicRoutes } from './public';
 
 /** Every endpoint under /api/v1. Each router is either public or wholly behind `authenticate`. */
 export const apiRoutes = createRouter()
   .route('/auth', authRoutes)
+  .route('/public', publicRoutes)
   .route('/me', meRoutes)
   .route('/org', orgRoutes)
   .route('/branches', branchRoutes)

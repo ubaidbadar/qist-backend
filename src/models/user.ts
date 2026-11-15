@@ -9,6 +9,8 @@ const userSchema = new Schema(
     email: { type: String, required: true, trim: true, lowercase: true, unique: true },
     /** Never loaded unless asked for with `.select('+passwordHash')`. */
     passwordHash: { type: String, required: true, select: false },
+    /** Stable Google OpenID Connect subject; absent for legacy email/password-only accounts. */
+    googleSub: { type: String, select: false },
     fullName: { type: String, required: true, trim: true },
     role: { type: String, enum: ROLES, required: true },
     /** Branches a manager or staff member works in; empty for the owner, who sees every branch. */
@@ -23,8 +25,11 @@ const userSchema = new Schema(
   { collection: 'users', timestamps: true, versionKey: false },
 );
 
+// A Google identity can belong to only one Qist account; sparse keeps legacy accounts out of this index.
+userSchema.index({ googleSub: 1 }, { unique: true, sparse: true });
+
 // Safety net for documents not loaded through a query (e.g. one just created): secrets never reach a response.
-userSchema.set('toJSON', { transform: (_doc, { passwordHash, tokenVersion, ...user }) => user });
+userSchema.set('toJSON', { transform: (_doc, { passwordHash, googleSub, tokenVersion, ...user }) => user });
 
 userSchema.plugin(tenantGuard);
 

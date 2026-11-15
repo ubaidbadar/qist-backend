@@ -12,6 +12,11 @@ const VALID = {
 };
 
 describe('parseEnv', () => {
+  test('Google web client ID is optional and empty means disabled', () => {
+    expect(parseEnv({ ...VALID, GOOGLE_CLIENT_ID: '' }).GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(parseEnv({ ...VALID, GOOGLE_CLIENT_ID: '123.apps.googleusercontent.com' }).GOOGLE_CLIENT_ID).toBe('123.apps.googleusercontent.com');
+  });
+
   test('customer APK configuration is optional, validated and independent of enrollment', () => {
     expect(parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: '' }).CUSTOMER_APP_RELEASE_JSON).toBeUndefined();
     expect(parseEnv({ ...VALID, CUSTOMER_APP_RELEASE_JSON: JSON.stringify(VALID_RELEASE) }).CUSTOMER_APP_RELEASE_JSON?.wifiOnly).toBe(true);

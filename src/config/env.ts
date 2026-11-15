@@ -18,6 +18,8 @@ const envSchema = z
     JWT_REFRESH_SECRET: secret,
     INTERNAL_JOB_SECRET: secret,
     APP_ORIGIN: z.url(),
+    /** Public web OAuth client ID used by Google Identity Services and verified by the API. */
+    GOOGLE_CLIENT_ID: optionalText,
     // Needed from the uploads / email phases on; required in production.
     R2_ACCOUNT_ID: optionalText,
     R2_ACCESS_KEY_ID: optionalText,

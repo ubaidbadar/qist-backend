@@ -6,6 +6,8 @@ const orgSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
     status: { type: String, enum: ORG_STATUSES, required: true, default: 'active' },
+    /** Updated when the optional logo is replaced; used for cache-busting its public URL. */
+    logoUpdatedAt: { type: Date, default: null },
     paymentMethods: { type: [new Schema({
       id: { type: String, required: true },
       kind: { type: String, enum: ['cash', 'easypaisa', 'jazzcash', 'bank'], required: true },
