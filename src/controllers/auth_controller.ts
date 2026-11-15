@@ -30,7 +30,7 @@ export const googleConfig = publicController.createHandlers(async (c) => {
 /**
  * POST /auth/google
  * Existing users sign in by Google's stable subject ID. Previously verified Qist emails can be
- * be linked atomically on first Google sign-in. New users complete shop and password setup here.
+ * linked atomically on first Google sign-in. New users complete shop and password setup here.
  */
 export const googleSignIn = publicController.createHandlers(validate('json', googleAuthSchema), async (c) => {
   const { credential, onboarding } = c.req.valid('json');
@@ -67,7 +67,7 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
             _id: user._id,
             orgId: user.orgId,
             emailVerifiedAt: { $ne: null },
-            $or: [{ googleSub: { $exists: false } }, { googleSub: null }],
+            $or: [{ googleSub: { $exists: false } }, { googleSub: null }, { googleSub: identity.googleSub }],
           },
           { $set: { googleSub: identity.googleSub, lastLoginAt: new Date() } },
           { returnDocument: 'after' },
