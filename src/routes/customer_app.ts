@@ -21,7 +21,8 @@ export const customerAppRoutes = createRouter()
     if (version !== undefined && !/^\d{1,10}$/.test(version)) throw new AppError('VALIDATION_ERROR', 400, 'Invalid app version');
     return next();
   })
-  .post('/auth/start', authLimit, ...controller.start)
+  .post('/auth/start', ...controller.start)
+  // .post('/auth/start', authLimit, ...controller.start)
   .post('/auth/request-code', recoveryLimit, ...controller.requestCode)
   .post('/auth/verify-code', authLimit, ...controller.verifyCode)
   .post('/auth/set-password', authLimit, ...controller.setPassword)
