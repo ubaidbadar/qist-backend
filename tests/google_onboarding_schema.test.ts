@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { googleLinkSchema, googleAuthSchema, googleOnboardingSchema, orgLogoUpdateSchema } from '@shop/shared';
+import { googleLinkSchema, googleAuthSchema, googleOnboardingSchema, loginSchema, orgLogoUpdateSchema } from '@shop/shared';
 import { User } from '../src/models/user';
 
 describe('Google sign-in and retailer onboarding contracts', () => {
@@ -9,13 +9,25 @@ describe('Google sign-in and retailer onboarding contracts', () => {
     expect(googleAuthSchema.safeParse({ credential: 'a'.repeat(24) }).success).toBe(true);
   });
 
-  test('requires shop name, phone and address while keeping the logo optional', () => {
-    expect(googleOnboardingSchema.safeParse({
-      shopName: 'Al-Madina Mobiles', phone: '03001234567', address: 'Shop 12, Faisalabad',
-    }).success).toBe(true);
-    expect(googleOnboardingSchema.safeParse({
-      shopName: 'Al-Madina Mobiles', phone: '', address: 'Shop 12, Faisalabad',
-    }).success).toBe(false);
+  test('requires owner name, shop details and a matching password while keeping the logo optional', () => {
+    const valid = {
+      fullName: 'Ayesha Khan',
+      shopName: 'Al-Madina Mobiles',
+      phone: '03001234567',
+      address: 'Shop 12, Faisalabad',
+      password: 'correct horse battery',
+      confirmPassword: 'correct horse battery',
+    };
+    expect(googleOnboardingSchema.safeParse(valid).success).toBe(true);
+    expect(googleOnboardingSchema.safeParse({ ...valid, phone: '' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, fullName: '' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, confirmPassword: 'different password' }).success).toBe(false);
+    expect(googleOnboardingSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
+  });
+
+  test('staff sign-in accepts email and password, never a branch phone number', () => {
+    expect(loginSchema.safeParse({ email: 'owner@example.com', password: 'correct horse battery' }).success).toBe(true);
+    expect(loginSchema.safeParse({ email: '03001234567', password: 'correct horse battery' }).success).toBe(false);
   });
 
   test('removing a logo requires explicit null', () => {

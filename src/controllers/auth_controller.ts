@@ -17,7 +17,6 @@ import { Org } from '../models/org';
 import { OrgLogo } from '../models/org_logo';
 import { User } from '../models/user';
 import { env } from '../config/env';
-import { randomSecret } from '../lib/tokens';
 
 function isDuplicateKeyError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
@@ -30,9 +29,8 @@ export const googleConfig = publicController.createHandlers(async (c) => {
 
 /**
  * POST /auth/google
- * Existing connected users sign in by Google's stable subject ID, never by email alone.
- * Existing email/password users must explicitly connect Google while authenticated.
- * New users receive an onboarding response, then submit shop details to this endpoint.
+ * Existing users sign in by Google's stable subject ID. Previously verified Qist emails can be
+ * linked atomically on first Google sign-in. New users complete shop and password setup here.
  */
 export const googleSignIn = publicController.createHandlers(validate('json', googleAuthSchema), async (c) => {
   const { credential, onboarding } = c.req.valid('json');
@@ -57,9 +55,41 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
     if (!user.active) throw new ForbiddenError('Your account has been deactivated. Ask the shop owner to reactivate it.');
 
     if (!user.googleSub) {
-      // A matching email is not proof that the Google account controls an existing Qist session.
-      // The owner must first sign in with Qist and explicitly connect Google from their account.
-      throw new ConflictError('This email already has a Qist account. Sign in with your existing password, then connect Google from your account menu.');
+      // A matching address is linked only if the same address was already verified by Qist.
+      // Google verification alone is not sufficient for an older third-party-email account.
+      if (!user.emailVerifiedAt) {
+        throw new ConflictError('This Qist account needs email verification before Google sign-in can be linked. Sign in with your email and password and verify your email first.');
+      }
+
+      try {
+        const linked = await User.findOneAndUpdate(
+          {
+            _id: user._id,
+            orgId: user.orgId,
+            emailVerifiedAt: { $ne: null },
+            $or: [{ googleSub: { $exists: false } }, { googleSub: null }, { googleSub: identity.googleSub }],
+          },
+          { $set: { googleSub: identity.googleSub, lastLoginAt: new Date() } },
+          { returnDocument: 'after' },
+        ).select('+googleSub +tokenVersion').lean();
+
+        if (!linked || linked.googleSub !== identity.googleSub) {
+          throw new ConflictError('This Qist account is already connected to a different Google account.');
+        }
+
+        await recordAudit(linked, {
+          action: 'user.google_connected',
+          entity: 'user',
+          entityId: linked._id,
+          summary: 'Connected Google sign-in to an existing verified Qist account',
+        });
+        return sendSession(c, linked);
+      } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          throw new ConflictError('This Google account is already connected to another Qist user.');
+        }
+        throw error;
+      }
     }
 
     return sendSession(c, user);
@@ -75,7 +105,7 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
   }
 
   const logoData = onboarding.logo ? decodeOrgLogo(onboarding.logo) : null;
-  const passwordHash = await hashPassword(randomSecret());
+  const passwordHash = await hashPassword(onboarding.password);
   const now = new Date();
 
   try {
@@ -92,8 +122,8 @@ export const googleSignIn = publicController.createHandlers(validate('json', goo
         email: identity.email,
         googleSub: identity.googleSub,
         passwordHash,
-        passwordEnabled: false,
-        fullName: identity.fullName,
+        passwordEnabled: true,
+        fullName: onboarding.fullName,
         role: 'owner',
         emailVerifiedAt: now,
         lastLoginAt: now,
