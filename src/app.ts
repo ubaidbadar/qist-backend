@@ -36,7 +36,8 @@ export function createApp() {
         if (!origin) return env.APP_ORIGIN;
         if (origin === env.APP_ORIGIN) return origin;
         if (env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
-        if (/^https:\/\/[a-z0-9-]+(\.web\.app|\.firebaseapp\.com)$/.test(origin)) return origin;
+        // Never trust every Firebase Hosting project: credentialed requests could expose sessions.
+        if (env.APP_ADDITIONAL_ORIGINS.includes(origin)) return origin;
         return null;
       },
       credentials: true,
