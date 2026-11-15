@@ -1,39 +1,156 @@
 import type { Context } from 'hono';
-import { loginSchema, signupSchema } from '@shop/shared';
+import { googleAuthSchema, loginSchema, signupSchema } from '@shop/shared';
 import { acrossTenants } from '../db/tenant_guard';
 import { withTransaction } from '../db/transaction';
 import { recordAudit } from '../lib/audit';
 import { sendVerificationEmail } from '../lib/auth_emails';
 import { ConflictError, fieldDetails, ForbiddenError, UnauthorizedError } from '../lib/errors';
 import { publicController } from '../lib/factory';
+import { decodeOrgLogo } from '../lib/org_logo';
+import { verifyGoogleIdentity } from '../lib/google_identity';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../lib/passwords';
 import { clearRefreshCookie, readRefreshCookie } from '../lib/refresh_cookie';
 import { endSession, sendSession, useRefreshToken } from '../lib/session';
 import { validate } from '../lib/validate';
 import { Branch } from '../models/branch';
 import { Org } from '../models/org';
+import { OrgLogo } from '../models/org_logo';
 import { User } from '../models/user';
+import { env } from '../config/env';
+import { randomSecret } from '../lib/tokens';
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 11000;
+}
+
+/** Public Google configuration. The client ID is public by design; the client secret is never sent to the browser. */
+export const googleConfig = publicController.createHandlers(async (c) => {
+  return c.json({ data: { enabled: Boolean(env.GOOGLE_CLIENT_ID), clientId: env.GOOGLE_CLIENT_ID ?? null } });
+});
+
+/**
+ * POST /auth/google
+ * Existing connected users sign in by Google's stable subject ID, never by email alone.
+ * Existing email/password users must explicitly connect Google while authenticated.
+ * New users receive an onboarding response, then submit shop details to this endpoint.
+ */
+export const googleSignIn = publicController.createHandlers(validate('json', googleAuthSchema), async (c) => {
+  const { credential, onboarding } = c.req.valid('json');
+  const identity = await verifyGoogleIdentity(credential);
+
+  const matches = await acrossTenants(
+    User.find({ $or: [{ googleSub: identity.googleSub }, { email: identity.email }] })
+      .select('+googleSub +tokenVersion')
+      .limit(2)
+      .lean(),
+  );
+
+  if (matches.length > 1) {
+    throw new ConflictError('This Google account and email are associated with different Qist accounts. Contact support before continuing.');
+  }
+
+  const user = matches[0];
+  if (user) {
+    if (user.googleSub && user.googleSub !== identity.googleSub) {
+      throw new ConflictError('This email is already connected to a different Google account. Sign in using your existing method.');
+    }
+    if (!user.active) throw new ForbiddenError('Your account has been deactivated. Ask the shop owner to reactivate it.');
+
+    if (!user.googleSub) {
+      // A matching email is not proof that the Google account controls an existing Qist session.
+      // The owner must first sign in with Qist and explicitly connect Google from their account.
+      throw new ConflictError('This email already has a Qist account. Sign in with your existing password, then connect Google from your account menu.');
+    }
+
+    return sendSession(c, user);
+  }
+
+  if (!onboarding) {
+    return c.json({
+      data: {
+        onboardingRequired: true as const,
+        profile: { fullName: identity.fullName, email: identity.email },
+      },
+    });
+  }
+
+  const logoData = onboarding.logo ? decodeOrgLogo(onboarding.logo) : null;
+  const passwordHash = await hashPassword(randomSecret());
+  const now = new Date();
+
+  try {
+    const owner = await withTransaction(async () => {
+      const org = await Org.create({ name: onboarding.shopName, logoUpdatedAt: logoData ? now : null });
+      const branch = await Branch.create({
+        orgId: org._id,
+        name: 'Main Branch',
+        phone: onboarding.phone,
+        address: onboarding.address,
+      });
+      const created = await User.create({
+        orgId: org._id,
+        email: identity.email,
+        googleSub: identity.googleSub,
+        passwordHash,
+        passwordEnabled: false,
+        fullName: identity.fullName,
+        role: 'owner',
+        emailVerifiedAt: now,
+        lastLoginAt: now,
+      });
+
+      if (logoData && onboarding.logo) {
+        await OrgLogo.create({ _id: org._id, contentType: onboarding.logo.contentType, data: logoData });
+      }
+
+      await recordAudit(created, {
+        action: 'org.created',
+        entity: 'org',
+        entityId: org._id,
+        branchId: branch._id,
+        summary: 'Created a retailer account using Google sign-in',
+        metadata: { signupMethod: 'google', logoAdded: Boolean(logoData) },
+      });
+
+      return created;
+    });
+
+    return sendSession(c, owner, 201);
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) throw error;
+
+    // A concurrent Google signup may have won the unique email/subject index race.
+    const existing = await acrossTenants(
+      User.findOne({ googleSub: identity.googleSub }).select('+googleSub +tokenVersion').lean(),
+    );
+    if (existing?.googleSub === identity.googleSub && existing.active) return sendSession(c, existing);
+    throw new ConflictError('An account with this email already exists. Sign in using that account instead.');
+  }
+});
 
 /** POST /auth/signup: creates the organization, its first branch and the owner, then signs the owner in. */
 export const signup = publicController.createHandlers(validate('json', signupSchema), async (c) => {
   const input = c.req.valid('json');
-  if (await acrossTenants(User.exists({ email: input.email }))) {
-    throw new ConflictError('An account with this email already exists', fieldDetails('email', 'Already registered'));
-  }
   const passwordHash = await hashPassword(input.password);
 
   const owner = await withTransaction(async () => {
     const org = await Org.create({ name: input.orgName });
     const branch = await Branch.create({ orgId: org._id, name: input.branchName });
-    const user = await User.create({ orgId: org._id, email: input.email, passwordHash, fullName: input.fullName, role: 'owner' });
+    const user = await User.create({ orgId: org._id, passwordHash, fullName: input.fullName, email: input.email, role: 'owner' });
     await recordAudit(user, {
       action: 'org.created',
       entity: 'org',
       entityId: org._id,
       branchId: branch._id,
-      summary: `Created ${org.name} with branch ${branch.name}`,
+      summary: 'Created a retailer account using email and password',
     });
     return user;
+  }).catch((error: unknown) => {
+    // The unique email index is the source of truth; avoid a separate preflight read and handle signup races.
+    if (isDuplicateKeyError(error)) {
+      throw new ConflictError('An account with this email already exists', fieldDetails('email', 'Already registered'));
+    }
+    throw error;
   });
 
   await sendVerificationEmail(owner);

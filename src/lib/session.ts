@@ -1,30 +1,89 @@
 import type { Context } from 'hono';
 import type { Types } from 'mongoose';
+import type { Me } from '@shop/shared';
 import { acrossTenants } from '../db/tenant_guard';
-import { Branch } from '../models/branch';
-import { Org } from '../models/org';
 import { RefreshToken } from '../models/refresh_token';
 import { User } from '../models/user';
-import { authUserOf } from './auth_user';
 import { ForbiddenError, UnauthorizedError } from './errors';
 import { signAccessToken } from './jwt';
 import { setRefreshCookie } from './refresh_cookie';
 import { userAgentOf } from './request';
-import { scopeFilter } from './scope';
 import { createSecretToken, readSecretToken, secretMatches } from './tokens';
 
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Two tabs refreshing with the same cookie at once is normal; inside this window it is not treated as theft. */
 const ROTATION_RACE_WINDOW_MS = 30_000;
 
-/** The signed-in user, their organization and the active branches they can work in (the `Me` the portal reads). */
-export async function loadMe(userId: Types.ObjectId, orgId: Types.ObjectId) {
-  const [user, org] = await Promise.all([User.findOne({ _id: userId, orgId }).lean(), Org.findById(orgId).lean()]);
-  if (!user || !org) throw new UnauthorizedError();
-  if (org.status === 'suspended') throw new ForbiddenError('This organization is suspended');
+/**
+ * The signed-in user, organization and active branches in one MongoDB aggregation command.
+ * The branch lookup applies the same tenant, active-branch and role scope as the former separate queries.
+ */
+export async function loadMe(userId: Types.ObjectId, orgId: Types.ObjectId): Promise<Me> {
+  const [me] = await User.aggregate<Me>([
+    { $match: { _id: userId, orgId } },
+    {
+      $lookup: {
+        from: 'orgs',
+        localField: 'orgId',
+        foreignField: '_id',
+        as: 'org',
+      },
+    },
+    { $unwind: '$org' },
+    {
+      $lookup: {
+        from: 'branches',
+        let: { currentOrgId: '$orgId', currentRole: '$role', allowedBranchIds: '$branchIds' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$orgId', '$$currentOrgId'] },
+                  { $eq: ['$active', true] },
+                  {
+                    $or: [
+                      { $eq: ['$$currentRole', 'owner'] },
+                      { $in: ['$_id', { $ifNull: ['$$allowedBranchIds', []] }] },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          { $sort: { name: 1 } },
+        ],
+        as: 'branches',
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        user: {
+          _id: '$_id',
+          orgId: '$orgId',
+          email: '$email',
+          fullName: '$fullName',
+          role: '$role',
+          branchIds: '$branchIds',
+          active: '$active',
+          googleLinked: { $ne: [{ $ifNull: ['$googleSub', null] }, null] },
+          passwordEnabled: { $ifNull: ['$passwordEnabled', true] },
+          emailVerifiedAt: '$emailVerifiedAt',
+          mustChangePassword: '$mustChangePassword',
+          lastLoginAt: '$lastLoginAt',
+          createdAt: '$createdAt',
+          updatedAt: '$updatedAt',
+        },
+        org: 1,
+        branches: 1,
+      },
+    },
+  ]).exec();
 
-  const branches = await Branch.find({ ...scopeFilter(authUserOf(user), '_id'), active: true }).sort({ name: 1 }).lean();
-  return { user, org, branches };
+  if (!me) throw new UnauthorizedError();
+  if (me.org.status === 'suspended') throw new ForbiddenError('This organization is suspended');
+  return me;
 }
 
 /** Responds with a new session: access token and user in the body, a new refresh token in its httpOnly cookie. */

@@ -18,6 +18,13 @@ const envSchema = z
     JWT_REFRESH_SECRET: secret,
     INTERNAL_JOB_SECRET: secret,
     APP_ORIGIN: z.url(),
+    /** Exact additional frontend origins, comma-separated. Never use wildcard Firebase domains. */
+    APP_ADDITIONAL_ORIGINS: z.preprocess(
+      (value) => (typeof value === 'string' ? value.split(',').map((origin) => origin.trim()).filter(Boolean) : []),
+      z.array(z.url().refine((origin) => new URL(origin).origin === origin, 'must be an origin without a path')).max(10),
+    ),
+    /** Public web OAuth client ID used by Google Identity Services and verified by the API. */
+    GOOGLE_CLIENT_ID: optionalText,
     // Needed from the uploads / email phases on; required in production.
     R2_ACCOUNT_ID: optionalText,
     R2_ACCESS_KEY_ID: optionalText,
@@ -61,6 +68,9 @@ const envSchema = z
       ctx.addIssue({ code: 'custom', path: ['JWT_REFRESH_SECRET'], message: 'must differ from JWT_ACCESS_SECRET' });
     }
     if (env.NODE_ENV !== 'production') return;
+    for (const origin of [env.APP_ORIGIN, ...env.APP_ADDITIONAL_ORIGINS]) {
+      if (!origin.startsWith('https://')) ctx.addIssue({ code: 'custom', path: ['APP_ADDITIONAL_ORIGINS'], message: 'production CORS origins must use https' });
+    }
     for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'DEVICE_APP_APK_URL', 'DEVICE_APP_SIGNATURE_CHECKSUM'] as const) {
       if (!env[key]) ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
     }

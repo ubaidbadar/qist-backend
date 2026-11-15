@@ -1,10 +1,12 @@
-import { orgUpdateSchema, paymentSettingsSchema, policyUpdateSchema } from '@shop/shared';
+import { orgLogoUpdateSchema, orgUpdateSchema, paymentSettingsSchema, policyUpdateSchema } from '@shop/shared';
 import { withTransaction } from '../db/transaction';
 import { recordAudit } from '../lib/audit';
 import { NotFoundError } from '../lib/errors';
+import { decodeOrgLogo } from '../lib/org_logo';
 import { authedController } from '../lib/factory';
 import { validate } from '../lib/validate';
 import { Org } from '../models/org';
+import { OrgLogo } from '../models/org_logo';
 
 /** GET /org */
 export const show = authedController.createHandlers(async (c) => {
@@ -20,6 +22,39 @@ export const update = authedController.createHandlers(validate('json', orgUpdate
     const updated = await Org.findByIdAndUpdate(auth.orgId, { $set: c.req.valid('json') }, { returnDocument: 'after' }).lean();
     if (!updated) throw new NotFoundError('Organization');
     await recordAudit(auth, { action: 'org.updated', entity: 'org', entityId: auth.orgId, summary: `Renamed the organization to ${updated.name}` });
+    return updated;
+  });
+  return c.json({ data: org });
+});
+
+/** PATCH /org/logo: one optional image; store its bytes off the normal session path. */
+export const updateLogo = authedController.createHandlers(validate('json', orgLogoUpdateSchema), async (c) => {
+  const { auth } = c.var;
+  const { logo } = c.req.valid('json');
+  const data = logo ? decodeOrgLogo(logo) : null;
+  const org = await withTransaction(async () => {
+    const updated = await Org.findByIdAndUpdate(
+      auth.orgId,
+      { $set: { logoUpdatedAt: data ? new Date() : null } },
+      { returnDocument: 'after' },
+    ).lean();
+    if (!updated) throw new NotFoundError('Organization');
+
+    if (data && logo) {
+      await OrgLogo.updateOne(
+        { _id: auth.orgId },
+        { $set: { contentType: logo.contentType, data } },
+        { upsert: true },
+      );
+    } else {
+      await OrgLogo.deleteOne({ _id: auth.orgId });
+    }
+    await recordAudit(auth, {
+      action: 'org.logo_updated',
+      entity: 'org',
+      entityId: auth.orgId,
+      summary: data ? 'Updated the shop logo' : 'Removed the shop logo',
+    });
     return updated;
   });
   return c.json({ data: org });
