@@ -127,7 +127,7 @@ describe.skipIf(!hasDatabase)('customer app', () => {
     expect((await overview(second)).status).toBe(401);
     expect((await call('GET', `/customers/${customer._id}`, { token: shop.token })).status).toBe(200);
     expect((await call('GET', `/contracts/${contract!._id}`, { token: shop.token })).status).toBe(200);
-    expect(await Payment.countDocuments({ contractId: new Types.ObjectId(contract!._id) })).toBe(before.data.payments.items.length);
+    expect(await Payment.countDocuments({ orgId: new Types.ObjectId(shop.session.org._id), contractId: new Types.ObjectId(contract!._id) })).toBe(before.data.payments.items.length);
     const start = await call<{ next: string }>('POST', '/customer-app/auth/start', { body: { phone } });
     expect(start.data.next).toBe('otp');
   });

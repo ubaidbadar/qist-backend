@@ -108,12 +108,12 @@ async function loadContract(auth: AuthUser, id: string | undefined) {
         let: { deviceId: '$deviceId', orgId: '$orgId' },
         pipeline: [
           { $match: { $expr: { $and: [{ $eq: ['$_id', '$$deviceId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
-          { $project: { lockState: 1 } },
+          { $project: { lockState: 1, 'enrollment.enrolledAt': 1, 'enrollment.lastCheckInAt': 1, 'enrollment.appVersion': 1 } },
         ],
         as: 'matchedDevice',
       },
     },
-    { $set: { deviceLockState: { $ifNull: [{ $arrayElemAt: ['$matchedDevice.lockState', 0] }, null] } } },
+    { $set: { deviceLockState: { $ifNull: [{ $arrayElemAt: ['$matchedDevice.lockState', 0] }, null] }, deviceEnrollment: { $ifNull: [{ $arrayElemAt: ['$matchedDevice.enrollment', 0] }, null] } } },
     { $unset: 'matchedDevice' },
   ]);
 

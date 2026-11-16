@@ -21,7 +21,7 @@ const envSchema = z
     /** Exact additional frontend origins, comma-separated. Never use wildcard Firebase domains. */
     APP_ADDITIONAL_ORIGINS: z.preprocess(
       (value) => (typeof value === 'string' ? value.split(',').map((origin) => origin.trim()).filter(Boolean) : []),
-      z.array(z.url().refine((origin) => new URL(origin).origin === origin, 'must be an origin without a path')).max(10),
+      z.array(z.url().refine((origin) => URL.canParse(origin) && new URL(origin).origin === origin, 'must be an origin without a path')).max(10),
     ),
     /** Public web OAuth client ID used by Google Identity Services and verified by the API. */
     GOOGLE_CLIENT_ID: optionalText,
