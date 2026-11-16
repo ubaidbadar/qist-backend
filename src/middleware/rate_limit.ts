@@ -7,6 +7,8 @@ interface RateLimitOptions {
   max: number;
   /** Off in integration tests, where every request comes from the same address. */
   enabled?: boolean;
+  /** Authenticated APIs may scope a budget to the verified principal instead of a shared NAT. */
+  key?: (c: Context) => string;
 }
 
 interface Window {
@@ -33,7 +35,7 @@ function clientIp(c: Context): string {
  * Fixed-window limit per client IP, kept in this process's memory. Enough for one container;
  * several instances would each allow `max`, so move the counters to a shared store before scaling out.
  */
-export function rateLimit({ windowMs, max, enabled = true }: RateLimitOptions): MiddlewareHandler {
+export function rateLimit({ windowMs, max, enabled = true, key: clientKey }: RateLimitOptions): MiddlewareHandler {
   const windows = new Map<string, Window>();
 
   return async (c, next) => {
@@ -43,7 +45,7 @@ export function rateLimit({ windowMs, max, enabled = true }: RateLimitOptions): 
       for (const [key, window] of windows) if (window.resetAt <= now) windows.delete(key);
     }
 
-    const key = clientIp(c);
+    const key = clientKey ? clientKey(c) : clientIp(c);
     const current = windows.get(key);
     const window = current && current.resetAt > now ? current : { count: 0, resetAt: now + windowMs };
     window.count += 1;

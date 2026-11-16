@@ -2,7 +2,6 @@ import { expect, spyOn, test } from 'bun:test';
 import { Query } from 'mongoose';
 import { Customer } from '../src/models/customer';
 import { whatsappTestOutbox } from '../src/lib/whatsapp';
-import * as push from '../src/lib/push';
 import { call } from './api';
 
 // Exercise the real router/validation/controller without pretending to test MongoDB atomicity.
@@ -31,40 +30,14 @@ test('existing-password routing never sends a WhatsApp code or returns financial
   } finally { plans.mockRestore(); reads.mockRestore(); }
 });
 
-test('first-password routing prefers the enrolled lock app and never returns the OTP', async () => {
-  const plans = spyOn(Customer, 'aggregate')
-    .mockResolvedValueOnce([{ _id: 'test-customer' }] as never)
-    .mockResolvedValueOnce([{ token: 'enrolled-locker-fcm-token' }] as never);
-  const queries = spyOn(Query.prototype, 'exec').mockResolvedValueOnce(null).mockResolvedValueOnce({});
-  const send = spyOn(push, 'sendDeviceCustomerAuthCode').mockResolvedValue(true);
+test('legacy device-code delivery fails closed instead of sending secrets over FCM', async () => {
+  const plans = spyOn(Customer, 'aggregate').mockResolvedValue([{ _id: 'test-customer' }] as never);
   const sent = whatsappTestOutbox.length;
   try {
-    const result = await call('POST', '/customer-app/auth/start', { body: { phone: '03001234567' } });
-    expect(result.status).toBe(200);
-    expect(result.data).toEqual({ next: 'otp', retryAfterSeconds: 60, delivery: 'device' });
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0]?.[0]).toBe('enrolled-locker-fcm-token');
+    const result = await call('POST', '/customer-app/auth/request-code', { body: { phone: '03001234567', channel: 'device' } });
+    expect(result.status).toBe(503);
     expect(whatsappTestOutbox.length).toBe(sent);
-    expect(JSON.stringify(result.data)).not.toMatch(/[0-9]{6}/);
-  } finally { plans.mockRestore(); queries.mockRestore(); send.mockRestore(); }
-});
-
-test('switching from locker delivery to WhatsApp revokes the old locker code', async () => {
-  const plans = spyOn(Customer, 'aggregate')
-    .mockResolvedValueOnce([{ _id: 'test-customer' }] as never)
-    .mockResolvedValueOnce([{ token: 'enrolled-locker-fcm-token' }] as never);
-  const queries = spyOn(Query.prototype, 'exec').mockResolvedValueOnce({ reset: { requestId: 'old-request-id' } });
-  const cancel = spyOn(push, 'cancelDeviceCustomerAuthCode').mockResolvedValue(undefined);
-  const sent = whatsappTestOutbox.length;
-  try {
-    const result = await call('POST', '/customer-app/auth/request-code', {
-      body: { phone: '03001234567', channel: 'whatsapp' },
-    });
-    expect(result.status).toBe(200);
-    expect(result.data).toEqual({ retryAfterSeconds: 60, delivery: 'whatsapp' });
-    expect(cancel).toHaveBeenCalledWith('enrolled-locker-fcm-token', 'old-request-id');
-    expect(whatsappTestOutbox.length).toBe(sent + 1);
-  } finally { plans.mockRestore(); queries.mockRestore(); cancel.mockRestore(); }
+  } finally { plans.mockRestore(); }
 });
 
 test('first-password routing sends one code and returns the resend cooldown', async () => {

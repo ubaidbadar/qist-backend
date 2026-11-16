@@ -8,6 +8,10 @@ const schema = new Schema({
   orgId: { type: Schema.Types.ObjectId, required: true },
   deviceId: { type: Schema.Types.ObjectId, required: true },
   expiresAt: { type: Date, required: true },
+  enrollmentHash: { type: String, default: null, select: false },
+  keyId: { type: String, default: null },
+  accountId: { type: Schema.Types.ObjectId, default: null },
+  accountVersion: { type: Number, default: null },
   consumedAt: { type: Date, default: null },
 }, { collection: 'customer_auth_handoffs', timestamps: true, versionKey: false });
 

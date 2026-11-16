@@ -22,3 +22,4 @@ export * from './permissions';
 export * from './plans';
 export * from './schedule';
 export * from './users';
+export * from './trusted_device_auth';

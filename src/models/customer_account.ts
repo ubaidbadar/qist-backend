@@ -7,7 +7,14 @@ const resetSchema = new Schema({
   attempts: { type: Number, default: 0 },
   requestId: { type: String, default: null },
 }, { _id: false });
-const setupSchema = new Schema({ digest: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });
+const setupSchema = new Schema({
+  digest: { type: String, required: true }, expiresAt: { type: Date, required: true },
+  deviceBinding: { type: new Schema({
+    accountVersion: { type: Number, required: true },
+    deviceId: { type: Schema.Types.ObjectId, required: true }, orgId: { type: Schema.Types.ObjectId, required: true },
+    enrollmentHash: { type: String, default: null }, keyId: { type: String, default: null },
+  }, { _id: false }), default: undefined },
+}, { _id: false });
 const sessionSchema = new Schema({ id: { type: String, required: true }, expiresAt: { type: Date, required: true } }, { _id: false });
 
 /** A verified phone identity, independent of retailer staff. Never stores retailer permissions. */

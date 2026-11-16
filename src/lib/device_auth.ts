@@ -8,6 +8,8 @@ export interface EnrolledDevice {
   _id: Types.ObjectId;
   orgId: Types.ObjectId;
   branchId: Types.ObjectId;
+  /** Snapshot of the credential verified for this request; never serialize it. */
+  enrollmentHash: string;
 }
 
 /**
@@ -22,5 +24,5 @@ export async function deviceFromToken(token: string | undefined): Promise<Enroll
     Device.findById(parsed._id).select('orgId branchId enrollment.secretHash'),
   ).lean();
   if (!device?.enrollment?.secretHash || !secretMatches(parsed.secret, device.enrollment.secretHash)) return null;
-  return { _id: device._id, orgId: device.orgId, branchId: device.branchId };
+  return { _id: device._id, orgId: device.orgId, branchId: device.branchId, enrollmentHash: device.enrollment.secretHash };
 }

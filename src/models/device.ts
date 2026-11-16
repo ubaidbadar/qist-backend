@@ -41,6 +41,8 @@ const deviceSchema = new Schema(
           pushToken: { type: String, default: '' },
           appVersion: { type: String, default: '' },
           platform: { type: String, default: 'android' },
+          authPublicKey: { type: String, default: null, select: false },
+          authKeyId: { type: String, default: null },
           customerApp: {
             type: new Schema({
               status: { type: String, enum: ['pending', 'downloading', 'installing', 'installed', 'failed', 'needs_attention', 'not_configured'], required: true },
