@@ -17,7 +17,7 @@ export const customerAppReleaseSchema = z.object({
 export type CustomerAppRelease = z.infer<typeof customerAppReleaseSchema>;
 
 export const customerAppReportSchema = z.object({
-  status: z.enum(['pending', 'downloading', 'installing', 'installed', 'failed', 'needs_attention', 'not_configured']),
+  status: z.enum(['pending', 'downloading', 'installing', 'installed', 'failed', 'needs_attention', 'not_configured']).default('pending'),
   versionCode: z.number().int().positive().max(2_100_000_000).optional(),
   detailCode: z.enum(['waiting_for_wifi', 'waiting_for_setup', 'network', 'storage', 'invalid_release', 'signature_mismatch', 'install_failed', 'user_action', 'unsupported_android', 'not_device_owner']).optional(),
 });

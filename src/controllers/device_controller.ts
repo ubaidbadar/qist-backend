@@ -51,7 +51,7 @@ export const enroll = publicController.createHandlers(validate('json', deviceEnr
       { _id: device._id, orgId: device.orgId },
       {
         $set: {
-          enrollment: { secretHash: credential.secretHash, enrolledAt: new Date(), lastCheckInAt: new Date(), pushToken, appVersion, platform },
+          enrollment: { secretHash: credential.secretHash, enrolledAt: new Date(), lastCheckInAt: null, pushToken, appVersion, platform },
         },
         $unset: { enrollToken: 1 },
       },
@@ -114,7 +114,7 @@ export const issueCustomerAuthHandoff = deviceController.createHandlers(validate
         from: 'customers',
         let: { customerId: '$customerId', orgId: '$orgId' },
         pipeline: [
-          { $match: { $expr: { $and: [{ $eq: ['$_id', '$customerId'] }, { $eq: ['$orgId', '$orgId'] }] } } },
+          { $match: { $expr: { $and: [{ $eq: ['$_id', '$$customerId'] }, { $eq: ['$orgId', '$$orgId'] }] } } },
           { $project: { phone: 1 } },
         ],
         as: 'customer',

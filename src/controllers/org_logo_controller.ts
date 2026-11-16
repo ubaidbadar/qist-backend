@@ -6,7 +6,7 @@ import { OrgLogo } from '../models/org_logo';
 /** GET /public/orgs/:orgId/logo — public, immutable image bytes; the org ID is not a secret. */
 export const show = publicController.createHandlers(async (c) => {
   const orgId = parseId(c.req.param('orgId'), 'Organization');
-  const logo = await OrgLogo.findById(orgId).select('+data contentType').lean();
+  const logo = await OrgLogo.findById(orgId).select('+data contentType').exec();
   if (!logo) throw new NotFoundError('Organization logo');
 
   c.header('Content-Type', logo.contentType);

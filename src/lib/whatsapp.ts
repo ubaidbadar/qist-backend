@@ -35,9 +35,7 @@ export async function sendWhatsAppCode(phone: string, code: string) {
     if (!response.ok) { await response.body?.cancel(); throw whatsappUnavailable(); }
     const result = await response.json() as { messages?: { id?: string }[] };
     if (!result.messages?.[0]?.id) throw whatsappUnavailable();
-  } catch (err) {
-    // @ts-ignore
-    console.log({ ...err }, 'whatsapp')
+  } catch {
     // Never surface a provider response that might contain a recipient or credential.
     throw whatsappUnavailable();
   }

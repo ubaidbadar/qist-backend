@@ -50,7 +50,7 @@ describe.skipIf(!hasDatabase)('model rules', () => {
       (await model.listIndexes()).map((index) => index.name).sort();
 
     expect(await indexNames(Branch)).toEqual(['_id_', 'orgId_1']);
-    expect(await indexNames(User)).toEqual(['_id_', 'email_1', 'orgId_1']);
+    expect(await indexNames(User)).toEqual(['_id_', 'email_1', 'googleSub_1', 'orgId_1']);
     expect(await indexNames(RefreshToken)).toEqual(['_id_', 'expiresAt_1', 'userId_1']);
     expect(await indexNames(EmailToken)).toEqual(['_id_', 'expiresAt_1']);
     expect(await indexNames(AuditLog)).toEqual(['_id_']);

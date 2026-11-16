@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { addDays, DEVICE_ADMIN_COMPONENT, todayInShops, type Contract, type ContractWithSchedule, type Customer, type DeviceCheckin, type DeviceCommand, type DeviceCredential, type Device as DeviceDoc, type EnrollmentTicket } from '@shop/shared';
 import { Types } from 'mongoose';
 import { Device } from '../src/models/device';
+import { Contract as ContractModel } from '../src/models/contract';
 import { env } from '../src/config/env';
 import { VALID_RELEASE } from './customer_install_fixture';
 import { call, newCustomer, prepareDatabase, randomImei, signupOrg } from './api';
@@ -88,6 +89,22 @@ describe.skipIf(!hasDatabase)('device API (Phase 2)', () => {
     const ticket = (await call<EnrollmentTicket>('POST', `/devices/${device._id}/enrollment`, { token: shop.token })).data;
     await Device.updateOne({ _id: new Types.ObjectId(device._id), orgId: new Types.ObjectId(shop.session.org._id) }, { $set: { 'enrollToken.expiresAt': new Date(Date.now() - 1000) } });
     expect((await call('POST', '/device/enroll', { body: { token: ticket.token } })).status).toBe(401);
+  });
+
+  test('installed APK empty report can check in and update contract connection status', async () => {
+    const phone = await enrolledPhone();
+    const before = await call<DeviceDoc>('GET', `/devices/${phone.deviceId}`, { token: shop.token });
+    expect(before.data.enrollment?.lastCheckInAt).toBeNull();
+    const res = await checkin(phone.token, { appVersion: '0.2.0', lockState: 'unlocked', customerApp: {} });
+    expect(res.status).toBe(200);
+    const after = await call<DeviceDoc>('GET', `/devices/${phone.deviceId}`, { token: shop.token });
+    expect(after.data.enrollment?.lastCheckInAt).toBeTruthy();
+    expect(after.data.enrollment?.customerApp?.status).toBe('pending');
+    const contract = await ContractModel.findOne({ deviceId: phone.deviceId, orgId: shop.session.org._id }).lean();
+    const detail = await call<ContractWithSchedule>('GET', `/contracts/${contract?._id}`, { token: shop.token });
+    expect(detail.data.deviceEnrollment?.lastCheckInAt).toBeTruthy();
+    expect(detail.data.deviceEnrollment).not.toHaveProperty('secretHash');
+    expect(detail.data.deviceEnrollment).not.toHaveProperty('pushToken');
   });
 
   test('check-in needs the device credential', async () => {

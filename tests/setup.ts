@@ -13,7 +13,10 @@ export const testDbName = `${process.env.MONGODB_DB ?? 'shop'}`.slice(0, 16) + `
 
 Object.assign(process.env, {
   NODE_ENV: 'test', // even if server/.env says development: emails go to the in-memory outbox
-  MONGODB_URI: process.env.MONGODB_URI ?? 'mongodb://database.invalid:27017',
+  // The client selects the database from the URI. Keep tests isolated even when a URI names production.
+  MONGODB_URI: (process.env.MONGODB_URI ?? 'mongodb://database.invalid:27017').replace(
+    /^(mongodb(?:\+srv)?:\/\/[^/?]+)(?:\/[^?]*)?/, `$1/${testDbName}`,
+  ),
   MONGODB_DB: testDbName,
   JWT_ACCESS_SECRET: `access-${TEST_SECRET}`,
   JWT_REFRESH_SECRET: `refresh-${TEST_SECRET}`,
