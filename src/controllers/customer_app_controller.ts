@@ -9,11 +9,11 @@ import { customerAppController, publicController } from '../lib/factory';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from '../lib/passwords';
 import { validate } from '../lib/validate';
 import { requireWhatsApp, sendWhatsAppCode } from '../lib/whatsapp';
-import { cancelDeviceCustomerAuthCode, sendDeviceCustomerAuthCode } from '../lib/push';
 import { Customer } from '../models/customer';
 import { CustomerNotification } from '../models/customer_notification';
 import { CustomerPushToken } from '../models/customer_push_token';
 import { CustomerAccount } from '../models/customer_account';
+import { validateSigninHandoff } from '../lib/trusted_device_auth';
 import { CustomerAuthHandoff } from '../models/customer_auth_handoff';
 
 const HOUR = 60 * 60 * 1000;
@@ -62,67 +62,11 @@ async function registeredPhone(phone: string, requirePlan = false) {
   return rows.length > 0;
 }
 
-/** Enrolled devices eligible to receive a sign-in code for this phone. */
-async function customerDevicePushTokens(phone: string): Promise<string[]> {
-  const rows = await Customer.aggregate<{ token: string }>([
-    { $match: { orgId: { $exists: true }, phone } },
-    {
-      $lookup: {
-        from: 'orgs',
-        localField: 'orgId',
-        foreignField: '_id',
-        pipeline: [{ $match: { status: 'active' } }, { $project: { _id: 1 } }],
-        as: 'org',
-      },
-    },
-    { $match: { 'org.0': { $exists: true } } },
-    {
-      $lookup: {
-        from: 'contracts',
-        let: { customerId: '$_id', orgId: '$orgId' },
-        pipeline: [
-          { $match: { $expr: { $and: [
-            { $eq: ['$customerId', '$customerId'] },
-            { $eq: ['$orgId', '$orgId'] },
-            { $in: ['$status', ['active', 'defaulted', 'completed']] },
-          ] } } },
-          { $project: { deviceId: 1 } },
-        ],
-        as: 'contracts',
-      },
-    },
-    { $unwind: '$contracts' },
-    {
-      $lookup: {
-        from: 'devices',
-        let: { deviceId: '$contracts.deviceId', orgId: '$orgId' },
-        pipeline: [
-          { $match: { $expr: { $and: [
-            { $eq: ['$_id', '$deviceId'] },
-            { $eq: ['$orgId', '$orgId'] },
-            { $ne: [{ $ifNull: ['$enrollment.pushToken', ''] }, ''] },
-            { $ne: [{ $ifNull: ['$enrollment.secretHash', null] }, null] },
-          ] } } },
-          { $project: { 'enrollment.pushToken': 1 } },
-        ],
-        as: 'device',
-      },
-    },
-    { $unwind: '$device' },
-    { $group: { _id: '$device.enrollment.pushToken' } },
-    { $limit: 10 },
-    { $project: { _id: 0, token: '$_id' } },
-  ]);
-  return [...new Set(rows.map((row) => row.token).filter((token): token is string => typeof token === 'string' && token.length > 0))];
-}
-
 /** Shared delivery/cooldown boundary for first setup and recovery. No blind resend retries. */
 async function issueCode(phone: string, strict: boolean, channel: 'auto' | 'device' | 'whatsapp' = 'auto') {
-  const deviceTokens = channel === 'whatsapp' ? [] : await customerDevicePushTokens(phone);
-  if (channel === 'device' && deviceTokens.length === 0) {
-    throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'No enrolled Qist Locker is available. Use WhatsApp instead.');
-  }
-  if (channel === 'whatsapp' || (channel === 'auto' && deviceTokens.length === 0)) requireWhatsApp();
+  // Old clients keep their WhatsApp recovery flow; approval uses the signed challenge endpoints.
+  if (channel === 'device') throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'Update Qist to use secure device approval, or use WhatsApp recovery.');
+  requireWhatsApp();
 
   const now = new Date();
   const hourAgo = new Date(now.getTime() - HOUR);
@@ -131,9 +75,8 @@ async function issueCode(phone: string, strict: boolean, channel: 'auto' | 'devi
   const requestId = randomBytes(16).toString('hex');
   const expiresAt = new Date(now.getTime() + RESET_TTL);
   const expiredWindow = { $lte: [{ $ifNull: ['$resetWindowStart', new Date(0)] }, hourAgo] };
-  let previousRequestId: string | undefined;
   try {
-    const previous = await CustomerAccount.findOneAndUpdate({
+    await CustomerAccount.findOneAndUpdate({
       phone, $and: [
         { $or: [{ lastResetSentAt: { $lte: new Date(now.getTime() - 60_000) } }, { lastResetSentAt: null }] },
         { $or: [{ 'reset.attempts': { $lt: 5 } }, { 'reset.expiresAt': { $lte: now } }, { reset: null }] },
@@ -149,7 +92,6 @@ async function issueCode(phone: string, strict: boolean, channel: 'auto' | 'devi
         createdAt: { $ifNull: ['$createdAt', now] }, updatedAt: now,
       }
     }], { upsert: true, updatePipeline: true }).select('+reset').lean();
-    previousRequestId = previous?.reset?.requestId ?? undefined;
   } catch (err) {
     if (!(err instanceof mongo.MongoServerError && err.code === 11000)) throw err;
     if (!strict) return { retryAfterSeconds: 60, delivery: 'whatsapp' as const };
@@ -165,23 +107,8 @@ async function issueCode(phone: string, strict: boolean, channel: 'auto' | 'devi
   }
 
   try {
-    let delivery: 'device' | 'whatsapp' = 'whatsapp';
-    const cancelTokens = deviceTokens.length > 0 ? deviceTokens : previousRequestId ? await customerDevicePushTokens(phone) : [];
-    if (previousRequestId) {
-      await Promise.all(cancelTokens.map((token) => cancelDeviceCustomerAuthCode(token, previousRequestId!)));
-    }
-    if (deviceTokens.length > 0) {
-      const results = await Promise.all(deviceTokens.map((token) => sendDeviceCustomerAuthCode(token, requestId, code, expiresAt)));
-      if (results.some(Boolean)) delivery = 'device';
-      else if (channel === 'device') {
-        throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'Qist could not reach your financed phone. Try WhatsApp instead.');
-      }
-    }
-    if (delivery === 'whatsapp') {
-      requireWhatsApp();
-      await sendWhatsAppCode(phone, code);
-    }
-    return { retryAfterSeconds: 60, delivery };
+    await sendWhatsAppCode(phone, code);
+    return { retryAfterSeconds: 60, delivery: 'whatsapp' as const };
   } catch (err) {
     await CustomerAccount.updateOne({ phone, 'reset.digest': digest }, { $set: { 'reset.expiresAt': now } });
     throw err;
@@ -253,9 +180,11 @@ export const setPassword = publicController.createHandlers(validate('json', cust
   const { phone, password, setupToken } = c.req.valid('json');
   const digest = setupDigest(phone, setupToken);
   // Reject expired/random proofs before expensive password hashing; the write below also enforces single use.
-  const account = await CustomerAccount.findOne({ phone, 'setup.digest': digest, 'setup.expiresAt': { $gt: new Date() } }).select('+tokenVersion').lean();
+  const account = await CustomerAccount.findOne({ phone, 'setup.digest': digest, 'setup.expiresAt': { $gt: new Date() } }).select('+tokenVersion +setup').lean();
   if (!account) throw new ValidationError('Verification expired. Sign in again on your enrolled phone or request a new code.');
+  if (account.setup?.deviceBinding && account.setup.deviceBinding.accountVersion !== account.tokenVersion) throw new UnauthorizedError('Device sign-in is no longer valid.');
   const passwordHash = await hashPassword(password);
+  if (account.setup?.deviceBinding) await validateSigninHandoff({ ...account.setup.deviceBinding, phone, accountId: account._id, accountVersion: account.setup.deviceBinding.accountVersion });
   const id = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + CUSTOMER_SESSION_MS);
   const updated = await CustomerAccount.findOneAndUpdate(
@@ -300,17 +229,12 @@ export const exchangeDeviceHandoff = publicController.createHandlers(validate('j
     { ticketHash: hash(ticket), nonceHash: hash(nonce), expiresAt: { $gt: now }, consumedAt: null },
     { $set: { consumedAt: now } },
     { returnDocument: 'after' },
-  ).lean();
+  ).select('+enrollmentHash').lean();
   if (!handoff) throw new UnauthorizedError('This device sign-in request has expired. Please try again.');
 
-  const account = await CustomerAccount.findOneAndUpdate(
-    { phone: handoff.phone },
-    { $setOnInsert: { phone: handoff.phone } },
-    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
-  ).select('+passwordHash +tokenVersion').lean().catch(async (error: unknown) => {
-    if (!(error instanceof mongo.MongoServerError && error.code === 11000)) throw error;
-    return CustomerAccount.findOne({ phone: handoff.phone }).select('+passwordHash +tokenVersion').lean();
-  });
+  await validateSigninHandoff(handoff);
+  // The atomic account writes below also retain this identity/version, including after a concurrent deletion.
+  const account = await CustomerAccount.findOne({ _id: handoff.accountId, phone: handoff.phone, tokenVersion: handoff.accountVersion }).select('+passwordHash +tokenVersion').lean();
   if (!account) throw new UnauthorizedError('Please try signing in again.');
 
   if (account.passwordHash) {
@@ -335,7 +259,7 @@ export const exchangeDeviceHandoff = publicController.createHandlers(validate('j
   const expiresAt = new Date(Date.now() + RESET_TTL);
   const updated = await CustomerAccount.findOneAndUpdate(
     { _id: account._id, tokenVersion: account.tokenVersion, passwordHash: null },
-    { $set: { setup: { digest: setupDigest(handoff.phone, setupToken), expiresAt } }, $unset: { reset: 1 } },
+    { $set: { setup: { digest: setupDigest(handoff.phone, setupToken), expiresAt, deviceBinding: { accountVersion: account.tokenVersion, deviceId: handoff.deviceId, orgId: handoff.orgId, enrollmentHash: handoff.enrollmentHash, keyId: handoff.keyId } } }, $unset: { reset: 1 } },
     { returnDocument: 'after' },
   ).select('_id').lean();
   if (!updated) throw new UnauthorizedError('Please try signing in again.');

@@ -1,0 +1,13 @@
+{
+  "requestId": "aaaaaaaaaaaaaaaaaaaaaaaa",
+  "deviceId": "bbbbbbbbbbbbbbbbbbbbbbbb",
+  "kind": "remote",
+  "challenge": "ccccccccccccccccccccccccccccccccccccccccccc",
+  "nonceHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "expiresAt": "2026-11-17T05:03:00.000Z",
+  "decision": "approve",
+  "number": "074",
+  "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEXKfHgMAOUvOCjYIjbs3a3acOeS7n+KSRT/d+AgEGQPKcxBYO/hTQAdn3HQpqiRlNvM2ZiSQCr0L7vgVI/q8qqQ==",
+  "payload": "qist-customer-signin-v1\nremote\naaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbb\nccccccccccccccccccccccccccccccccccccccccccc\ndddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n2026-11-17T05:03:00.000Z\napprove\n074",
+  "signature": "MEUCIQDx98-WRdeqHj7BomOE2gEg-q1qCq9D_T19hob8H05k9wIgCCT_qjdSHCetI09CCYP6roQtt6H6g6xvy_TtKv_Vc4s"
+}
