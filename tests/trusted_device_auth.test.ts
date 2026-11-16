@@ -140,6 +140,9 @@ describe.skipIf(!hasDatabase)('trusted Locker authentication', () => {
     await Device.updateOne({ _id: o.device._id, orgId: o.shop.session.org._id }, { $set: { stockStatus: 'released' } });
     expect((await call('POST', '/customer-app/auth/set-password', { body: { phone: setup.data.phone, setupToken: setup.data.setupToken, password: 'test-password-123' } })).status).toBe(401);
     expect((await CustomerAccount.findOne({ phone: o.phone }).select('+passwordHash').lean())?.passwordHash).toBeNull();
+    await Device.updateOne({ _id: o.device._id, orgId: o.shop.session.org._id }, { $set: { stockStatus: 'sold' } });
+    await CustomerAccount.updateOne({ phone: o.phone }, { $inc: { tokenVersion: 1 } });
+    expect((await call('POST', '/customer-app/auth/set-password', { body: { phone: setup.data.phone, setupToken: setup.data.setupToken, password: 'test-password-123' } })).status).toBe(401);
   });
 
   test('number guesses and concurrent remote requests are bounded; unknown phone remains private', async () => {

@@ -87,5 +87,4 @@ export async function validateSigninHandoff(handoff: { deviceId: Types.ObjectId;
   if (!handoff.enrollmentHash || !handoff.keyId || !handoff.accountId || handoff.accountVersion == null) throw new UnauthorizedError('Device sign-in is no longer valid.');
   const device = await currentSigninDevice(handoff.deviceId, handoff.orgId, handoff.enrollmentHash, handoff.keyId);
   if ((device.enrollment.authKeyId ?? null) !== (handoff.keyId ?? null) || device.phone !== handoff.phone) throw new UnauthorizedError('Device sign-in is no longer valid.');
-  if (handoff.accountId && !await CustomerAccount.exists({ _id: handoff.accountId, phone: handoff.phone, tokenVersion: handoff.accountVersion })) throw new UnauthorizedError('Device sign-in is no longer valid.');
 }

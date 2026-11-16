@@ -182,6 +182,7 @@ export const setPassword = publicController.createHandlers(validate('json', cust
   // Reject expired/random proofs before expensive password hashing; the write below also enforces single use.
   const account = await CustomerAccount.findOne({ phone, 'setup.digest': digest, 'setup.expiresAt': { $gt: new Date() } }).select('+tokenVersion +setup').lean();
   if (!account) throw new ValidationError('Verification expired. Sign in again on your enrolled phone or request a new code.');
+  if (account.setup?.deviceBinding && account.setup.deviceBinding.accountVersion !== account.tokenVersion) throw new UnauthorizedError('Device sign-in is no longer valid.');
   const passwordHash = await hashPassword(password);
   if (account.setup?.deviceBinding) await validateSigninHandoff({ ...account.setup.deviceBinding, phone, accountId: account._id, accountVersion: account.setup.deviceBinding.accountVersion });
   const id = crypto.randomUUID();
