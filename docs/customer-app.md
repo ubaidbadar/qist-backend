@@ -1,84 +1,39 @@
 # Customer Android API
 
-All endpoints use the existing `/api/v1` JSON envelopes, shared Zod validation, controller/router layout, errors, and password hashing. Customer identities and JWT audience are separate from staff users and enrolled devices. No existing portal endpoint changes its response.
+All endpoints use `/api/v1`, shared validation, JSON envelopes and the existing password hashing/session implementation. Customer identities remain separate from staff and enrollment credentials.
 
-## Account setup and recovery
+## Sign-in
 
-A retailer registers the customer and creates a plan. On the financed phone, Android first attempts the signature-protected local Qist Locker handoff; the backend maps the enrolled device to its active customer contract and issues a one-use ticket. If the customer already has a password, this creates a customer session directly; otherwise it returns a five-minute password-setup proof and the app opens Create password without asking for OTP. On another phone, Android submits only the phone to `/auth/start`: an eligible number with a password goes to Password; an eligible number without one receives a code through an enrolled Qist Locker when possible, with WhatsApp as fallback; a number without a non-cancelled plan at an active retailer gets `unregistered` and no code.
+The customer explicitly chooses this phone, a code on the financed phone, or a password. Same-phone sign-in uses certificate-checked Binder plus a signed, nonce-bound Locker challenge. After the backend identifies the current customer, the app asks the user to confirm the linked number before exchanging the proof. A typed number must match the enrolled device's customer. See [trusted-device protocol](TRUSTED_DEVICE_AUTH.md) for cryptographic boundaries and rollout checks.
 
-OTP verification exchanges a code for a five-minute single-use setup proof, not a customer session. The separate password screen exchanges that proof and a new password for the authenticated session. Password recovery uses `/auth/request-code` and the same verify/set sequence; it prefers the enrolled locker and can explicitly fall back to WhatsApp. The old forgot/reset endpoints remain compatible.
+Another phone requests `method: otp`. A generic wake-up asks Locker to fetch pending requests; no code is sent in FCM. The customer opens Locker and taps **Show sign-in code** while the Android user is unlocked. A purpose-specific P-256 signature authorizes the code-display endpoint. The six-digit code is valid for three minutes and five guesses, with one request per minute and five per hour per number. The requesting app must retain its random nonce. Code verification consumes the request once and returns a handoff, never a customer session directly.
 
-Phone numbers normalize to `03XXXXXXXXX`. The verified phone identity can see its matching customer records across active retailers. Only authorized contract fields are returned; no CNIC, guarantors, internal notes, inventory cost, staff credentials, or device-enrollment credentials are exposed. Retailers must keep customer phone ownership accurate; changing a registered number changes which verified phone may access that record.
+Every successfully verified first-time customer creates a password. An existing password routes directly to password entry and also offers Locker sign-in. Only a current device-bound setup proof can set a first password; it cannot replace an existing password. WhatsApp and SMS authentication are removed. Legacy message endpoints return 410 with Locker guidance and never send a message. Without the enrolled phone, existing customers can use their password; first-time verification has no unverified fallback.
 
-| Method and path under `/customer-app` | Request | Result |
+| Path under `/customer-app` | Request | Result |
 | --- | --- | --- |
-| POST `/auth/start` | `{phone}` | `{next: password/otp/unregistered, retryAfterSeconds?, delivery?: device/whatsapp}` |
-| POST `/auth/request-code` | `{phone,channel?: auto/device/whatsapp}` | Recovery/resend for a plan owner; `{retryAfterSeconds,delivery}` |
-| POST `/auth/device/exchange` | `{ticket,nonce}` | `{next:session,accessToken,expiresAt}` or `{next:password,phone,setupToken,expiresAt}`; consumes the local handoff |
-| POST `/auth/verify-code` | `{phone,code}` | `{setupToken,expiresAt}`; consumes OTP |
-| POST `/auth/set-password` | `{phone,setupToken,password}` | Saves password, consumes proof, revokes old sessions and returns `{accessToken,expiresAt}` |
-| POST `/auth/forgot-password` | `{phone}` | Generic confirmation; code sent only for a registered phone at an active retailer |
-| POST `/auth/reset-password` | `{phone,code,password}` | Set first password or reset; consumes code and revokes all customer sessions |
-| POST `/auth/login` | `{phone,password}` | `{accessToken,expiresAt}` |
-| GET `/overview?contractId=...` | Bearer customer token; optional selected plan | Profile, available plans, selected plan with schedule/contact/status, first payment page, server Pakistan date |
-| GET `/payments?contractId=...&cursor=...` | Bearer customer token; owned plan | Next page of 20 non-voided payments |
-| POST `/auth/logout` | Bearer customer token | Revokes that device's session |
+| POST `/auth/start` | `{phone}` | `next: password/device/unregistered`; one joined lookup |
+| POST `/auth/device/local` | `{nonce,phone?}` | Anonymous local challenge |
+| POST `/auth/device/request` | `{phone,nonce,method:otp}` | Request ID and expiry; identical shape for unknown phones |
+| POST `/auth/device/claim` | `{requestId,nonce}` | Claims signed local proof with verified phone/name |
+| POST `/auth/device/verify-code` | `{requestId,nonce,code}` | One-use handoff and verified phone |
+| POST `/auth/device/exchange` | `{ticket,nonce}` | Session, or five-minute first-password proof |
+| POST `/auth/set-password` | `{phone,setupToken,password}` | Consumes current device-bound proof; first password only |
+| POST `/auth/login` | `{phone,password}` | Bounded customer session |
+| POST `/auth/logout` | Customer bearer | Revokes current session |
+| GET `/overview?contractId=...` | Customer bearer | Owned plans, selected plan, schedule, contacts, first payment page |
+| GET `/payments?contractId=...&cursor=...` | Customer bearer | Next 20 non-voided payments |
 
-Money is integer **paisa**. `totalPayable` excludes the down payment; remaining is `totalPayable + lateFees - paidTotal`. Installments expose their actual amounts, paid amounts, late fees, and statuses. The app must not assume equal monthly installments or calculate paid status from row position. Device lock state is the last acknowledged state, not a promise of real-time connectivity.
+## Data and query boundaries
 
-## Query and security boundaries
+Phones normalize to `03XXXXXXXXX`. Overview and pagination each use one account-rooted aggregation, validating session ID/expiry/version and joining phone-owned records at active retailers. Every nested join matches retailer ID and record ID. No customer CNIC, guarantor details, internal notes, inventory cost, staff secrets or enrollment credentials are exposed. Money uses integer paisa; remaining is totalPayable plus late fees minus paidTotal. Device status is last acknowledged state, not proof of current connectivity.
 
-Overview and payment pagination each run **one aggregation** rooted at `customer_accounts`. That aggregate validates session id, expiry, and password version, then joins only phone-owned records at active retailers. Every nested contract/payment/device/branch join matches retailer id as well as its record id. Payment rows are cursor-paginated and voided receipts are omitted.
+Security mutations use distinct conditional writes where needed: rate counters, attempt claims, signature checks, revocation checks, one-use handoff and session insertion. Collapsing these into a single total database operation would weaken replay/revocation protection. Ordinary identity reads use joins rather than N+1 lookups. Password verification occurs outside MongoDB and is followed by a version-checked session write.
 
-Authentication is intentionally not a single database command: an Argon2 password must be verified outside MongoDB before a conditional session write. Reset requests similarly need registered-phone lookup, an atomic challenge write, and delivery. Reset verification uses an atomic attempt claim followed by a conditional password update. These necessary writes prevent password-reset/login races and code reuse; they are not redundant refetches.
+Sessions use audience `qist-customer`, at most five active sessions and 30-day expiry. Existing sessions restore from encrypted backup-excluded storage. First-password proof, OTP and nonce never enter saved instance state or logs. Customer OTP entry reads the clipboard only after the user taps Paste.
 
-JWTs have audience `qist-customer`, last 30 days, and are checked against at most five active sessions on every read. A password reset increments token version and clears sessions. IP limits reuse the existing rate limiter. Codes expire after five minutes, allow five guesses, are HMAC-hashed at rest, and have a one-minute resend cooldown and five-send hourly cap per phone. The backend sends a high-priority FCM data message containing only the six-digit code, opaque request id and expiry to enrolled lock-app tokens for active/defaulted/completed contracts. It sends no customer name, phone, balance or contract details. The lock app stores the code in encrypted backup-excluded state, masks it on the kiosk lock screen until the customer reveals it, and otherwise exposes it through a private notification. A channel switch sends a best-effort cancellation to remove the old code. FCM acceptance is not delivery confirmation; Android notification permission, connectivity and OEM delivery can still prevent the code appearing. The app therefore keeps WhatsApp as an explicit fallback. Responses never contain codes; the in-memory outbox exists only in tests. Failed Meta requests return `SERVICE_UNAVAILABLE` and expire the undelivered challenge.
+## Rollout and verification
 
-## WhatsApp configuration
+Deploy backend before new clients. Both actual installed APKs must have compatible signing identities for local signature permission/Binder; different certificates fail closed. Deploy an updater-enabled Locker once before future Cloudflare uploads can update it. Preserve enrollment, finance lock state and signing keys. Do not reset financed phones to test login.
 
-Set these in the backend service environment, never in Android or GitHub source:
-
-```dotenv
-WHATSAPP_ACCESS_TOKEN=<Meta system-user access token>
-WHATSAPP_PHONE_NUMBER_ID=<business sender phone-number id>
-WHATSAPP_AUTH_TEMPLATE=<approved AUTHENTICATION copy-code template name>
-WHATSAPP_TEMPLATE_LANGUAGE=en_US
-WHATSAPP_GRAPH_VERSION=<supported version from your Meta app, e.g. vXX.0>
-```
-
-Use a Meta **authentication** template with a copy-code OTP button and five-minute expiry. The backend sends the same code in the body parameter and URL-button parameter. Use the language actually approved for that template. Test with a phone allowed by the Meta sender configuration before distributing. API acceptance is not proof of handset delivery; Meta delivery status/webhooks are separate. There is no console/demo-code fallback outside tests.
-
-References: [Meta's template example](https://www.postman.com/meta/whatsapp-business-platform/request/6vkv46u/create-authentication-template-w-otp-copy-code-button), [Meta's send-template endpoint](https://www.postman.com/meta/whatsapp-business-platform/request/lwtlz1k/send-message-template-interactive).
-
-The optional settings do not stop the existing portal/locker service starting. Until configured, customer code requests return a clear 503. The app's new privacy disclosures and Google Play Data safety must reflect real login and backend data before rollout; the old “no data collected / offline demo” declaration no longer applies.
-
-## Verification
-
-`bun run check` runs typecheck, lint, and tests. Without `MONGODB_URI`, integration tests explicitly skip. The Customer API integration workflow starts an isolated MongoDB replica set and runs all tests without production credentials. Tests cover WhatsApp setup, audience isolation, tenant/phone ownership, suspended retailers, empty accounts, code expiry/attempt limits/cooldown/reuse, concurrent reset, logout, money units, private-field exclusions, one-aggregate reads, and payment pagination.
-
-## Phone-first implementation and validation
-
-The pre-auth response discloses only the next step, never customer/retailer names, balances, password hashes or plan details. Start/verify/set requests share the existing IP auth limiter. Phone-scoped cooldown/send caps apply across all sending endpoints. Setup proofs are random 256-bit values, HMAC-hashed at rest, expire after five minutes and are invalidated by a newly issued code or password reset. Atomic conditional writes make code verification and password creation single-use under concurrent requests. A failed resend leaves a previously verified proof usable until its expiry.
-
-Authenticated overview now also provides each owned plan's next amount/date, count and (when completed) last payment date for the My phones sheet. The overview remains one aggregate with tenant/id filters on every join; payment-only reads skip that extra summary work. Existing clients can ignore the added optional fields.
-
-Checked with TypeScript and ESLint. Non-database security, shared business rules and real-router auth-routing tests pass. Added integration cases cover eligibility, no-password/password routing, OTP single use, five guesses, proof phone binding/expiry, resend invalidation, suspended retailers and concurrent verification/password creation. Local MongoDB startup was blocked by `open: Operation not permitted`, so those database cases still require the repository's Mongo-backed integration workflow. No production service or provider settings were changed.
-
-## Enrolled-device authentication
-
-The same-phone path is intentionally independent of the customer's phone-number entry and WhatsApp delivery:
-
-1. `pk.qist.customer` binds explicitly to `pk.qist.device/.customer.CustomerAuthService`. The locker service is exported only with `pk.qist.device.permission.CUSTOMER_AUTH` (`protectionLevel=signature`) and verifies the calling UID/package and shared signing certificate.
-2. The customer app generates a 32-byte cryptographically random nonce. The locker reads its own enrolled device credential from encrypted storage and calls `POST /api/v1/device/customer-auth/issue`.
-3. The device-authenticated endpoint finds the latest active/defaulted/completed contract for that device under the same retailer, joins the customer and active retailer, and creates a 256-bit random ticket. Only the ticket is returned to the locker; the long-lived device credential never crosses IPC.
-4. The ticket and nonce are SHA-256 hashed at rest in `customer_auth_handoffs`. The ticket expires after 60 seconds and the exchange atomically marks it consumed. Replays, expired tickets, mismatched nonces and devices without an eligible contract are rejected.
-5. `POST /customer-app/auth/device/exchange` maps the verified contract phone to the customer account. An account with a password gets a normal customer-audience session; a first-time account receives the existing short-lived password-setup proof. The customer app stores only its own session in Android Keystore-backed storage.
-
-| Method and path | Authentication | Request/result |
-| --- | --- | --- |
-| POST `/device/customer-auth/issue` | Enrolled device bearer credential | `{nonce}` → `{ticket,expiresAt}`; `Cache-Control: no-store` |
-| POST `/customer-app/auth/device/exchange` | Single-use opaque ticket + matching nonce | Session or password-setup proof; no customer OTP |
-
-The customer and locker APKs must be signed with the same release certificate for signature-level IPC to work. A mismatched signature fails closed and the customer app falls back to the normal phone/password flow. Never copy the locker credential into the customer app, Android preferences, intents or logs.
-
-For another phone, `/auth/start` and `/auth/request-code` prefer the enrolled locker FCM token. If no enrolled push target exists, FCM send fails, or the customer cannot access the notification, WhatsApp remains available. On Android 13+, notification permission may be denied: when the Qist kiosk lock screen is active the code is shown there; on an unlocked phone the private notification requires notification permission. The app does not silently grant that permission. A user who cannot see the device code can request WhatsApp after the resend cooldown.
+Run `bun run check` with an isolated Mongo replica set for full integration tests. Tests cover signed code display, wrong key/purpose/nonce, five guesses, expiry, release, account deletion/version changes, concurrent consumption, first-password proof, retired provider routes, tenant isolation, money, pagination and financial commands. Host checks cannot establish real Vivo Android 12 Keystore/Binder, FCM delivery, kiosk navigation or package installation; record those physical-device results separately.

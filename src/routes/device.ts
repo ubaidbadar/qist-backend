@@ -20,6 +20,7 @@ export const deviceApiRoutes = createRouter()
       .post('/customer-auth/key', customerAuthLimit, ...trusted.registerKey)
       .post('/customer-auth/local', customerAuthLimit, ...trusted.localDetails)
       .get('/customer-auth/pending', customerAuthLimit, ...trusted.pendingRequests)
+      .post('/customer-auth/code', customerAuthLimit, ...trusted.showCode)
       .post('/customer-auth/decide', customerAuthLimit, ...trusted.decide)
       .post('/customer-auth/issue', customerAuthLimit, ...device.issueCustomerAuthHandoff)
       .post('/commands/:id/ack', ...device.acknowledge),
