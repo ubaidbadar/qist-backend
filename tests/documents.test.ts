@@ -322,6 +322,24 @@ describe.skipIf(!hasDatabase)('private document lifecycle and authorization', ()
     ).toEqual([]);
   });
 
+  test('managers cannot list or retrieve document files outside their assigned branch', async () => {
+    const branch = await call<{ _id: string }>('POST', '/branches', {
+      token: shop.token,
+      body: { name: 'Other document branch' },
+    });
+    expect(branch.status).toBe(201);
+    const manager = await addMember(shop.token, 'manager', [branch.data._id]);
+    expect(
+      (await call('GET', `/documents?contractId=${contract._id}`, { token: manager.token })).status,
+    ).toBe(404);
+    expect(
+      (await call('GET', `/documents?customerId=${customer._id}`, { token: manager.token })).status,
+    ).toBe(403);
+    const ready = await Document.findOne({ orgId: shop.session.org._id, processing: 'ready' });
+    expect(ready).toBeTruthy();
+    expect((await content(String(ready!._id), manager.token)).status).toBe(404);
+  });
+
   test('customer uploads target their selected plan, require consent, and cannot use staff routes', async () => {
     expect(
       (await call('GET', `/documents?contractId=${contract._id}`, { token: customerToken })).status,
