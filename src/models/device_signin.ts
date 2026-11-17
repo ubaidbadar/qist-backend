@@ -1,7 +1,7 @@
 import { model, Schema } from 'mongoose';
 
 const schema = new Schema({
-  kind: { type: String, enum: ['local', 'remote'], required: true },
+  kind: { type: String, enum: ['local', 'remote', 'otp'], required: true },
   nonceHash: { type: String, required: true },
   challenge: { type: String, required: true },
   expiresAt: { type: Date, required: true },
@@ -12,6 +12,7 @@ const schema = new Schema({
   keyId: { type: String, default: null },
   phone: { type: String, default: null, select: false },
   numberHash: { type: String, default: null, select: false },
+  otpReady: { type: Boolean, default: false },
   attempts: { type: Number, default: 0 },
   accountId: { type: Schema.Types.ObjectId, default: null },
   accountVersion: { type: Number, default: null },

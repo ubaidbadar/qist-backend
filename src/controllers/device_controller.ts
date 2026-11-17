@@ -94,7 +94,7 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
 
 /** Deprecated bearer-only handoffs cannot meet the device-bound proof requirement. */
 export const issueCustomerAuthHandoff = deviceController.createHandlers(validate('json', deviceCustomerAuthIssueSchema), () => {
-  throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'Update Qist Locker to use secure device sign-in, or use password or WhatsApp recovery.');
+  throw new AppError('DEVICE_AUTH_UNAVAILABLE', 503, 'Update Qist Locker to use secure device sign-in, or use password or Locker recovery.');
 });
 
 /** The lock state a carried-out command leaves the phone in. */
