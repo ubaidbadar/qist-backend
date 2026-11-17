@@ -181,6 +181,7 @@ export const create = authedController.createHandlers(validate('json', contractC
       branchId,
       orgId: auth.orgId,
       customerName: customer.fullName,
+      guarantorsSnapshot: customer.guarantors.map(person => ({ ...person, id: person.id ?? crypto.randomUUID() })),
       customerCnic: customer.cnic,
       deviceLabel: `${device.brand} ${device.model}`,
       imeis: device.imeis,

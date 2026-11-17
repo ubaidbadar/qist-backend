@@ -1,4 +1,6 @@
 import { createRouter } from '../lib/hono';
+import { staffDocumentRoutes } from '../documents/routes';
+import { documentStorageReady } from '../documents/storage';
 import { authRoutes } from './auth';
 import { branchRoutes } from './branches';
 import { commandRoutes, lockRoutes } from './commands';
@@ -18,6 +20,8 @@ import { publicRoutes } from './public';
 
 /** Every endpoint under /api/v1. Each router is either public or wholly behind `authenticate`. */
 export const apiRoutes = createRouter()
+  .get('/capabilities', c => { c.header('Cache-Control', 'no-store'); return c.json({ data: { documents: 1, organizationSettings: 2, documentStorageReady: documentStorageReady(), revision: process.env.SOURCE_COMMIT ?? 'development' } }); })
+  .route('/documents', staffDocumentRoutes)
   .route('/auth', authRoutes)
   .route('/public', publicRoutes)
   .route('/me', meRoutes)

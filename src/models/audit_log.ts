@@ -7,7 +7,8 @@ const auditLogSchema = new Schema(
     orgId: { type: Schema.Types.ObjectId, required: true },
     branchId: { type: Schema.Types.ObjectId, default: null },
     actor: {
-      kind: { type: String, enum: ['user', 'system'], required: true },
+      kind: { type: String, enum: ['user', 'customer', 'system'], required: true },
+      customerAccountId: { type: Schema.Types.ObjectId, default: null },
       userId: { type: Schema.Types.ObjectId, default: null },
       name: { type: String, required: true },
     },

@@ -12,6 +12,7 @@ const contractSchema = new Schema(
     branchId: { type: Schema.Types.ObjectId, required: true },
     customerId: { type: Schema.Types.ObjectId, required: true },
     customerName: { type: String, required: true },
+    guarantorsSnapshot: { type: [new Schema({ id: String, fullName: String, cnic: String, phone: String, relation: String }, { _id: false })], default: undefined },
     customerCnic: { type: String, required: true },
     deviceId: { type: Schema.Types.ObjectId, required: true },
     deviceLabel: { type: String, required: true },

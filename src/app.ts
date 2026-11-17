@@ -46,7 +46,12 @@ export function createApp() {
       maxAge: CORS_MAX_AGE_SECONDS,
     }),
   );
-  app.use('/api/*', bodyLimit({ maxSize: JSON_BODY_LIMIT_BYTES, onError: (c) => errorResponse(c, new PayloadTooLargeError()) }));
+  const jsonLimit = bodyLimit({ maxSize: JSON_BODY_LIMIT_BYTES, onError: c => errorResponse(c, new PayloadTooLargeError()) });
+  app.use('/api/*', async (c, next) => {
+    // Only authenticated document PUTs accept larger, streamed bodies; all JSON limits remain narrow.
+    if (c.req.method === 'PUT' && /^\/api\/v1\/(customer-app\/)?documents\/[a-f0-9]{24}\/content$/.test(c.req.path)) return next();
+    return jsonLimit(c, next);
+  });
 
   app.route('/health', healthRoutes);
   app.route('/api/v1', apiRoutes);

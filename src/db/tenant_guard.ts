@@ -25,6 +25,7 @@ export function tenantGuard(schema: Schema) {
   });
 
   schema.pre('aggregate', function () {
+    if (crossTenantQueries.has(this)) return;
     const firstStage = this.pipeline()[0];
     if (firstStage && '$match' in firstStage && 'orgId' in firstStage.$match) return;
     throw new Error(`${this.model().modelName} aggregation must start with { $match: { orgId } }`);

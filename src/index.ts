@@ -9,7 +9,7 @@ import { logger } from './lib/logger';
 await connectDb();
 await ensureIndexes();
 
-const server = Bun.serve({ port: env.PORT, fetch: createApp().fetch });
+const server = Bun.serve({ port: env.PORT, fetch: createApp().fetch, maxRequestBodySize: 10 * 1024 * 1024 });
 logger.info('API listening', { port: server.port, env: env.NODE_ENV });
 scheduleJobs();
 

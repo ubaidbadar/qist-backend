@@ -4,6 +4,7 @@ import { DEFAULT_LOCK_POLICY, LOCK_MODES, ORG_STATUSES } from '@shop/shared';
 /** A retailer. Its _id is the tenant id that every other record carries as `orgId`. */
 const orgSchema = new Schema(
   {
+    documentPolicy: { type: Schema.Types.Mixed, default: undefined },
     name: { type: String, required: true, trim: true },
     status: { type: String, enum: ORG_STATUSES, required: true, default: 'active' },
     /** Updated when the optional logo is replaced; used for cache-busting its public URL. */

@@ -1,3 +1,4 @@
+import { runDocumentJobs } from '../documents/process_jobs';
 import { timingSafeEqual } from 'node:crypto';
 import type { Types } from 'mongoose';
 import { env } from '../config/env';
@@ -9,6 +10,7 @@ import { withJobLease } from '../jobs/lease';
 import { runOverdueCheck } from '../jobs/overdue_job';
 
 const JOBS = {
+  documents: () => runDocumentJobs(),
   overdue: (orgId?: Types.ObjectId) => runOverdueCheck(new Date(), { orgId }),
   'auto-lock': (orgId?: Types.ObjectId) => runAutoLock(new Date(), { anyHour: true, orgId }),
 };
