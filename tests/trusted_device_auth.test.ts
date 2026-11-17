@@ -524,6 +524,7 @@ describe.skipIf(!hasDatabase)('trusted Locker authentication', () => {
       if (invalidate === 'delete') await CustomerAccount.deleteOne({ phone: a.phone });
       expect((await verify(proof.meta, proof.n, code.data.code)).status).toBe(401);
       expect((await display(a, proof.meta)).status).toBe(401);
+      if (invalidate === 'delete') expect(await CustomerAccount.exists({ phone: a.phone })).toBeNull();
     }
   });
 

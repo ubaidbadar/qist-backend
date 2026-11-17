@@ -430,7 +430,11 @@ export const showCode = deviceController.createHandlers(validate('json', showSig
     )
   )
     throw expired();
-  const account = await signinAccount(request.phone);
+  // Reopening an already displayed challenge must not recreate a deleted app identity.
+  const account = request.otpReady
+    ? await CustomerAccount.findOne({ _id: request.accountId, phone: request.phone, tokenVersion: request.accountVersion })
+        .select('+tokenVersion').lean()
+    : await signinAccount(request.phone);
   if (
     !account ||
     (request.otpReady &&
