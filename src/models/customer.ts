@@ -3,6 +3,7 @@ import { tenantGuard } from '../db/tenant_guard';
 
 const guarantorSchema = new Schema(
   {
+    id: { type: String, default: () => crypto.randomUUID() },
     fullName: { type: String, required: true, trim: true },
     cnic: { type: String, required: true },
     phone: { type: String, required: true },

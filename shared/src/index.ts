@@ -23,3 +23,5 @@ export * from './plans';
 export * from './schedule';
 export * from './users';
 export * from './trusted_device_auth';
+
+export * from './documents';

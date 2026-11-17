@@ -1,3 +1,4 @@
+import { runDocumentJobs } from '../documents/process_jobs';
 import { deliverCustomerNotifications, sendCustomerDueReminders } from '../lib/customer_notifications';
 import { SHOP_TIME_ZONE } from '@shop/shared';
 import { logger } from '../lib/logger';
@@ -18,6 +19,7 @@ const safely = (name: string, job: () => Promise<unknown>) => () =>
 export function scheduleJobs() {
   Bun.cron('5 0 * * *', safely('overdue', () => runOverdueCheck()), { tz: SHOP_TIME_ZONE });
   Bun.cron('0 * * * *', safely('auto-lock', () => runAutoLock()), { tz: SHOP_TIME_ZONE });
+  Bun.cron('* * * * *', safely('documents', runDocumentJobs), { tz: SHOP_TIME_ZONE });
   Bun.cron('* * * * *', safely('customer-push', deliverCustomerNotifications), { tz: SHOP_TIME_ZONE });
   Bun.cron('0 9 * * *', safely('customer-due', sendCustomerDueReminders), { tz: SHOP_TIME_ZONE });
   logger.info('Jobs scheduled', { overdue: '00:05 daily', autoLock: 'hourly, at each retailer’s lock hour' });

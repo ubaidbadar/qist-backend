@@ -1,3 +1,4 @@
+import { customerDocumentRoutes } from '../documents/routes';
 import { AppError } from '../lib/errors';
 import { env } from '../config/env';
 import * as trusted from '../controllers/trusted_device_auth_controller';
@@ -36,6 +37,7 @@ export const customerAppRoutes = createRouter()
   .post('/auth/forgot-password', recoveryLimit, ...controller.requestReset)
   .post('/auth/reset-password', authLimit, ...controller.resetPassword)
   .use('*', authenticateCustomer)
+  .route('/documents', customerDocumentRoutes)
   .delete('/account', authLimit, ...controller.deleteAccount)
   .post('/push-token', pushLimit, ...controller.registerPush)
   .delete('/push-token', ...controller.unregisterPush)

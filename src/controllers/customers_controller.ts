@@ -1,3 +1,5 @@
+import { Document } from '../models/document';
+import { preserveGuarantorIds } from '../lib/guarantor_ids';
 import { customerCreateSchema, customerListQuerySchema, customerUpdateSchema, normalizeMobile, pageQuerySchema } from '@shop/shared';
 import type { Types } from 'mongoose';
 import { withTransaction } from '../db/transaction';
@@ -69,7 +71,7 @@ export const create = authedController.createHandlers(validate('json', customerC
   await assertCnicIsFree(auth, input.cnic);
 
   const customer = await withTransaction(async () => {
-    const created = await Customer.create({ ...input, homeBranchId, orgId: auth.orgId, createdBy: auth._id });
+    const created = await Customer.create({ ...input, guarantors: preserveGuarantorIds([], input.guarantors), homeBranchId, orgId: auth.orgId, createdBy: auth._id });
     await recordAudit(auth, { action: 'customer.created', entity: 'customer', entityId: created._id, branchId: homeBranchId, summary: `Added customer ${created.fullName}` });
     return created;
   });
@@ -84,6 +86,7 @@ export const update = authedController.createHandlers(validate('json', customerU
   if (input.homeBranchId) await usableBranch(auth, input.homeBranchId, 'homeBranchId');
   if (input.cnic && input.cnic !== existing.cnic) await assertCnicIsFree(auth, input.cnic, existing._id);
 
+  if (input.guarantors) input.guarantors = preserveGuarantorIds(existing.guarantors, input.guarantors);
   const updated = await withTransaction(async () => {
     const result = await Customer.findOneAndUpdate(
       { _id: existing._id, orgId: auth.orgId },
@@ -113,6 +116,8 @@ export const remove = authedController.createHandlers(async (c) => {
   }
 
   await withTransaction(async () => {
+    if (await Document.exists({ orgId: auth.orgId, customerId: existing._id, legalHold: true, processing: { $ne: 'deleted' } })) throw new ConflictError('This customer has documents on hold. Resolve the hold before deleting the customer.');
+    await Document.updateMany({ orgId: auth.orgId, customerId: existing._id, processing: { $ne: 'deleted' }, legalHold: false }, { $set: { processing: 'deleted', deletedAt: new Date(), replacementOpen: false }, $inc: { version: 1 } });
     await Customer.deleteOne({ _id: existing._id, orgId: auth.orgId });
     await recordAudit(auth, { action: 'customer.deleted', entity: 'customer', entityId: existing._id, branchId: existing.homeBranchId, summary: `Deleted customer ${existing.fullName}` });
   });

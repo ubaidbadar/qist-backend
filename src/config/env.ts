@@ -26,6 +26,11 @@ const envSchema = z
     /** Public web OAuth client ID used by Google Identity Services and verified by the API. */
     GOOGLE_CLIENT_ID: optionalText,
     // Needed from the uploads / email phases on; required in production.
+    DOCUMENTS_R2_BUCKET: optionalText,
+    DOCUMENTS_R2_ACCESS_KEY_ID: optionalText,
+    DOCUMENTS_R2_SECRET_ACCESS_KEY: optionalText,
+    DOCUMENT_PROCESSOR_URL: z.preprocess(value => value === '' ? undefined : value, z.url().optional()),
+    DOCUMENT_PROCESSOR_SECRET: z.preprocess(value => value === '' ? undefined : value, secret.optional()),
     R2_ACCOUNT_ID: optionalText,
     R2_ACCESS_KEY_ID: optionalText,
     R2_SECRET_ACCESS_KEY: optionalText,
@@ -67,6 +72,7 @@ const envSchema = z
     if (env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
       ctx.addIssue({ code: 'custom', path: ['JWT_REFRESH_SECRET'], message: 'must differ from JWT_ACCESS_SECRET' });
     }
+    if (env.DOCUMENTS_R2_BUCKET && env.DOCUMENTS_R2_BUCKET === env.R2_BUCKET) ctx.addIssue({ code: 'custom', path: ['DOCUMENTS_R2_BUCKET'], message: 'must be a separate private bucket' });
     if (env.NODE_ENV !== 'production') return;
     for (const origin of [env.APP_ORIGIN, ...env.APP_ADDITIONAL_ORIGINS]) {
       if (!origin.startsWith('https://')) ctx.addIssue({ code: 'custom', path: ['APP_ADDITIONAL_ORIGINS'], message: 'production CORS origins must use https' });

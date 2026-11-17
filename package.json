@@ -18,6 +18,8 @@
     "jose": "^6.2.12",
     "mongoose": "^9.10.3",
     "nodemailer": "^10.0.13",
+    "pdfjs-dist": "^6.5.438",
+    "sharp": "^0.35.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {
