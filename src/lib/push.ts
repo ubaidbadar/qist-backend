@@ -77,15 +77,12 @@ async function accessToken(): Promise<string> {
 }
 
 /**
- * Best-effort wake-up only: the authenticated check-in API is the sole source of lock/unlock commands.
- * FCM is never trusted to carry a command, and WorkManager continues polling if push is unavailable.
+ * Best-effort wake-up only: an authenticated check-in fetches the actual command.
+ * The token is never used for authentication or placed inside the FCM payload.
  */
-export async function wakeDevice(orgId: Types.ObjectId, deviceId: Types.ObjectId): Promise<void> {
+export async function wakeDeviceToken(pushToken: string, deviceId: string): Promise<boolean> {
+  if (!pushToken) return false;
   try {
-    const device = await Device.findOne({ _id: deviceId, orgId }).select('enrollment.pushToken').lean();
-    const pushToken = device?.enrollment?.pushToken;
-    if (!pushToken) return;
-
     const account = await credentials();
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`,
@@ -105,15 +102,21 @@ export async function wakeDevice(orgId: Types.ObjectId, deviceId: Types.ObjectId
         signal: AbortSignal.timeout(10000),
       },
     );
-    if (!response.ok) {
-      logger.warn('FCM wake-up failed', { deviceId: String(deviceId), status: response.status });
-    }
+    if (response.ok) return true;
+    logger.warn('FCM wake-up failed', { deviceId, status: response.status });
   } catch (err) {
-    // A push failure never rolls back an already committed command.
-    logger.warn('FCM wake-up unavailable; periodic check-in remains active', {
-      deviceId: String(deviceId),
-      err: String(err),
-    });
+    logger.warn('FCM wake-up unavailable; periodic check-in may continue', { deviceId, err: String(err) });
+  }
+  return false;
+}
+
+/** Normal finance commands continue using the current enrollment's registered FCM token. */
+export async function wakeDevice(orgId: Types.ObjectId, deviceId: Types.ObjectId): Promise<void> {
+  try {
+    const device = await Device.findOne({ _id: deviceId, orgId }).select('enrollment.pushToken').lean();
+    await wakeDeviceToken(device?.enrollment?.pushToken ?? '', String(deviceId));
+  } catch (err) {
+    logger.warn('FCM wake-up unavailable; periodic check-in remains active', { deviceId: String(deviceId), err: String(err) });
   }
 }
 

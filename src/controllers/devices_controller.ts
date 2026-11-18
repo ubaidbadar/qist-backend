@@ -13,6 +13,7 @@ import { createTokenFor } from '../lib/tokens';
 import { validate } from '../lib/validate';
 import { Branch } from '../models/branch';
 import { Device } from '../models/device';
+import { revokeRecovery } from '../lib/device_recovery';
 
 /** Stock belongs to a branch: people see and change only the stock of branches they work at. */
 
@@ -178,8 +179,9 @@ export const revokeEnrollment = authedController.createHandlers(async (c) => {
   const device = await findDevice(auth, c.req.param('id'));
   if (!device.enrollToken && !device.enrollment) throw new ConflictError('This phone is not enrolled');
 
-  await withTransaction(async () => {
+  await withTransaction(async (session) => {
     await Device.updateOne({ _id: device._id, orgId: auth.orgId }, { $unset: { enrollToken: 1, enrollment: 1 } });
+    await revokeRecovery(device._id, auth.orgId, session);
     await recordAudit(auth, { action: 'device.enrollment_revoked', entity: 'device', entityId: device._id, branchId: device.branchId, summary: `Revoked enrolment for ${device.brand} ${device.model}` });
   });
   return c.json({ data: { ok: true } });
