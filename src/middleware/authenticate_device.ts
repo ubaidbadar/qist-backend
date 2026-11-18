@@ -1,40 +1,41 @@
 import { Hono, type MiddlewareHandler } from 'hono';
+import { acrossTenants } from '../db/tenant_guard';
+import { recoveryFromToken } from '../lib/device_recovery';
 import { deviceFromToken } from '../lib/device_auth';
 import { AppError, UnauthorizedError } from '../lib/errors';
-import { recoveryFromToken } from '../lib/device_recovery';
-import { acrossTenants } from '../db/tenant_guard';
-import { Device } from '../models/device';
 import type { DeviceEnv } from '../lib/hono';
+import { Device } from '../models/device';
 
-/** Verifies a phone's `<deviceId>.<secret>` credential and loads it as `c.var.device` on every device-API request. */
+/**
+ * Normal requests require a currently enrolled phone. A verified survival
+ * record is accepted ONLY for check-in / release acknowledgement and ONLY
+ * when the primary business Device record no longer exists.
+ */
 export const authenticateDevice: MiddlewareHandler<DeviceEnv> = async (c, next) => {
   const [scheme, token] = (c.req.header('Authorization') ?? '').split(' ');
   if (scheme !== 'Bearer' || !token) throw new UnauthorizedError();
+
   const device = await deviceFromToken(token);
   if (device) {
     c.set('device', device);
     return next();
   }
 
-  // Only the existing check-in and command-ack endpoints can participate in recovery.
-  // Never let a survival credential access sign-in, key registration, or any staff API.
   const path = c.req.path;
   const isCheckin = c.req.method === 'POST' && path === '/api/v1/device/checkin';
   const isAck = c.req.method === 'POST' &&
-    new RegExp('^/api/v1/device/commands/[a-fA-F0-9]{24}/ack
+    new RegExp('^/api/v1/device/commands/[a-fA-F0-9]{24}/ack' + String.fromCharCode(36)).test(path);
   if (!isCheckin && !isAck) throw new UnauthorizedError();
 
   const recovery = await recoveryFromToken(token);
   if (!recovery || recovery.status === 'revoked') throw new UnauthorizedError();
 
-  // A previous credential must never be revived if a phone was re-enrolled
-  // or the primary record was restored with a different verifier.
-  const primaryStillExists = await acrossTenants(Device.exists({ _id: recovery._id }));
-  if (primaryStillExists) throw new UnauthorizedError();
+  // Never revive a stale credential when the business record was restored or
+  // replaced by a different enrollment with the same ObjectId.
+  if (await acrossTenants(Device.exists({ _id: recovery._id }))) throw new UnauthorizedError();
 
   if (recovery.status === 'active') {
-    // Do NOT send 401 to a cryptographically verified orphan. Existing Locker
-    // interprets 401 as permanent revocation and stops polling while it remains Device Owner.
+    // The original Locker permanently stands down on 401; 503 makes it retry.
     throw new AppError('SERVICE_UNAVAILABLE', 503, 'Device record unavailable; keep retrying');
   }
   if (recovery.status === 'released' && !isAck) throw new UnauthorizedError();
@@ -43,24 +44,4 @@ export const authenticateDevice: MiddlewareHandler<DeviceEnv> = async (c, next) 
   await next();
 };
 
-/** A router whose every route requires an enrolled phone. */
-export const deviceRouter = () => new Hono<DeviceEnv>().use(authenticateDevice);
-).test(path);
-  if (!isCheckin && !isAck) throw new UnauthorizedError();
-
-  const recovery = await recoveryFromToken(token);
-  if (!recovery || recovery.status === 'revoked') throw new UnauthorizedError();
-
-  if (recovery.status === 'active') {
-    // Do NOT send 401 to a cryptographically verified orphan. Existing Locker
-    // interprets 401 as permanent revocation and stops polling while it remains Device Owner.
-    throw new AppError('SERVICE_UNAVAILABLE', 503, 'Device record unavailable; keep retrying');
-  }
-  if (recovery.status === 'released' && !isAck) throw new UnauthorizedError();
-
-  c.set('recovery', recovery);
-  await next();
-};
-
-/** A router whose every route requires an enrolled phone. */
 export const deviceRouter = () => new Hono<DeviceEnv>().use(authenticateDevice);
