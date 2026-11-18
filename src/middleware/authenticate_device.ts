@@ -24,7 +24,7 @@ export const authenticateDevice: MiddlewareHandler<DeviceEnv> = async (c, next) 
   const path = c.req.path;
   const isCheckin = c.req.method === 'POST' && path === '/api/v1/device/checkin';
   const isAck = c.req.method === 'POST' &&
-    new RegExp('^/api/v1/device/commands/[a-fA-F0-9]{24}/ack' + String.fromCharCode(36)).test(path);
+    new RegExp('^/api/v1/device/commands/[a-fA-F0-9]{24}/ack$').test(path);
   if (!isCheckin && !isAck) throw new UnauthorizedError();
 
   const recovery = await recoveryFromToken(token);
