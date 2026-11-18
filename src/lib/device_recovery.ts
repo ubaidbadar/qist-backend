@@ -49,7 +49,6 @@ export async function registerRecovery(
         lastCheckInAt: null,
         releasedAt: null,
       },
-      $setOnInsert: { orgId: device.orgId },
     },
     { upsert: true, session },
   );
@@ -79,9 +78,7 @@ export async function mirrorRecoveryCheckin(
         ...(pushToken === undefined ? {} : { pushToken }),
       },
       $setOnInsert: {
-        orgId: device.orgId,
         secretHash: device.enrollmentHash,
-        status: 'active',
       },
     },
     { upsert: true, session },
