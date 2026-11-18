@@ -100,12 +100,13 @@ async function main() {
     throw new Error('Release requires an interactive SSH terminal; noninteractive automation is forbidden.');
   }
   await connectDb();
-  await DeviceRecovery.createCollection();
+  await DeviceRecovery.db.createCollections();
   await DeviceRecovery.createIndexes();
   try {
     if (action === 'list') await list();
     else if (action === 'backfill') await backfill();
-    else await requestRelease(new Types.ObjectId(id));
+    else if (id && ID.test(id)) await requestRelease(new Types.ObjectId(id));
+    else throw new Error('Missing or invalid device ID');
   } finally {
     await closeDb();
   }
