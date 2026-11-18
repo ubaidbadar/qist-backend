@@ -22,7 +22,6 @@ import { validate } from '../lib/validate';
 import { Device } from '../models/device';
 import { DeviceCommand } from '../models/device_command';
 import { acknowledgeOrphanRelease, mirrorRecoveryCheckin, orphanReleaseCheckin, recordNormalRelease, registerRecovery } from '../lib/device_recovery';
-import { NotFoundError as RecoveryNotFoundError } from '../lib/errors';
 
 /** Commands the phone still has to carry out, and that a check-in should deliver. */
 const DELIVERABLE = ['pending', 'delivered'] as const;
@@ -111,7 +110,7 @@ export const acknowledge = deviceController.createHandlers(validate('json', comm
   const commandId = parseId(c.req.param('id'), 'Command');
   if (c.var.recovery) {
     const outcome = await acknowledgeOrphanRelease(c.var.recovery, String(commandId), result);
-    if (outcome === 'not_found') throw new RecoveryNotFoundError('Command');
+    if (outcome === 'not_found') throw new NotFoundError('Command');
     return c.json({ data: { _id: String(commandId), type: 'release', status: outcome } });
   }
   const { device } = c.var;
