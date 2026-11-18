@@ -42,7 +42,6 @@ async function backfill() {
       { _id: device._id, orgId: device.orgId },
       {
         $setOnInsert: {
-          orgId: device.orgId,
           branchId: device.branchId,
           secretHash: device.enrollment.secretHash,
           pushToken: device.enrollment.pushToken ?? '',
