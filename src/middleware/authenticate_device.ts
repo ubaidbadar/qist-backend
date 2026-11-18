@@ -2,6 +2,8 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { deviceFromToken } from '../lib/device_auth';
 import { AppError, UnauthorizedError } from '../lib/errors';
 import { recoveryFromToken } from '../lib/device_recovery';
+import { acrossTenants } from '../db/tenant_guard';
+import { Device } from '../models/device';
 import type { DeviceEnv } from '../lib/hono';
 
 /** Verifies a phone's `<deviceId>.<secret>` credential and loads it as `c.var.device` on every device-API request. */
@@ -24,6 +26,11 @@ export const authenticateDevice: MiddlewareHandler<DeviceEnv> = async (c, next) 
 
   const recovery = await recoveryFromToken(token);
   if (!recovery || recovery.status === 'revoked') throw new UnauthorizedError();
+
+  // A previous credential must never be revived if a phone was re-enrolled
+  // or the primary record was restored with a different verifier.
+  const primaryStillExists = await acrossTenants(Device.exists({ _id: recovery._id }));
+  if (primaryStillExists) throw new UnauthorizedError();
 
   if (recovery.status === 'active') {
     // Do NOT send 401 to a cryptographically verified orphan. Existing Locker
