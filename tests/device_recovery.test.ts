@@ -13,6 +13,7 @@ import { Types } from 'mongoose';
 import { call, newCustomer, prepareDatabase, randomImei, signupOrg } from './api';
 import { hasDatabase } from './setup';
 import { Device } from '../src/models/device';
+import { acrossTenants } from '../src/db/tenant_guard';
 import { DeviceRecovery } from '../src/models/device_recovery';
 import { authorizeOrphanRelease, recoveryFromToken } from '../src/lib/device_recovery';
 
@@ -59,7 +60,7 @@ describe.skipIf(!hasDatabase)('surviving device-owner recovery (separate databas
 
   test('an enrolled phone has a verifier in the separate recovery database', async () => {
     const phone = await createEnrolledPhone();
-    const enrolled = await DeviceRecovery.findById(phone.deviceId).select('+secretHash +pushToken').lean();
+    const enrolled = await acrossTenants(DeviceRecovery.findById(phone.deviceId).select('+secretHash +pushToken')).lean();
     expect(enrolled?.status).toBe('active');
     expect(enrolled?.secretHash).toHaveLength(64);
     expect(enrolled?.secretHash).not.toEqual(phone.credential);
@@ -68,13 +69,13 @@ describe.skipIf(!hasDatabase)('surviving device-owner recovery (separate databas
 
     const pushed = await checkin(phone.credential, 'firebase-test-token');
     expect(pushed.status).toBe(200);
-    const mirrored = await DeviceRecovery.findById(phone.deviceId).select('+pushToken').lean();
+    const mirrored = await acrossTenants(DeviceRecovery.findById(phone.deviceId).select('+pushToken')).lean();
     expect(mirrored?.pushToken).toBe('firebase-test-token');
   });
 
   test('a verified orphan gets retryable 503, not permanent 401; bad credentials remain 401', async () => {
     const phone = await createEnrolledPhone();
-    const device = await Device.findById(phone.deviceId).lean();
+    const device = await acrossTenants(Device.findById(phone.deviceId)).lean();
     expect(device).not.toBeNull();
     await Device.deleteOne({ _id: phone.deviceId, orgId: device!.orgId });
 
@@ -91,7 +92,7 @@ describe.skipIf(!hasDatabase)('surviving device-owner recovery (separate databas
     await expect(authorizeOrphanRelease(new Types.ObjectId(phone.deviceId)))
       .rejects.toThrow('device still exists');
 
-    const device = await Device.findById(phone.deviceId).lean();
+    const device = await acrossTenants(Device.findById(phone.deviceId)).lean();
     await Device.deleteOne({ _id: phone.deviceId, orgId: device!.orgId });
 
     const authorized = await authorizeOrphanRelease(new Types.ObjectId(phone.deviceId));
@@ -115,7 +116,7 @@ describe.skipIf(!hasDatabase)('surviving device-owner recovery (separate databas
       body: { result: 'applied' },
     });
     expect(applied.status).toBe(200);
-    expect((await DeviceRecovery.findById(phone.deviceId).lean())?.status).toBe('released');
+    expect((await acrossTenants(DeviceRecovery.findById(phone.deviceId)).lean())?.status).toBe('released');
 
     // The APK retries this acknowledgement if Device Owner relinquish is delayed.
     expect((await call('POST', ackUrl, {
@@ -129,9 +130,9 @@ describe.skipIf(!hasDatabase)('surviving device-owner recovery (separate databas
     const phone = await createEnrolledPhone();
     expect((await call('DELETE', `/devices/${phone.deviceId}/enrollment`, { token: shop.token })).status).toBe(200);
     expect((await checkin(phone.credential)).status).toBe(401);
-    expect((await DeviceRecovery.findById(phone.deviceId).lean())?.status).toBe('revoked');
+    expect((await acrossTenants(DeviceRecovery.findById(phone.deviceId)).lean())?.status).toBe('revoked');
 
-    const device = await Device.findById(phone.deviceId).lean();
+    const device = await acrossTenants(Device.findById(phone.deviceId)).lean();
     await Device.deleteOne({ _id: phone.deviceId, orgId: device!.orgId });
     expect((await checkin(phone.credential)).status).toBe(401);
   });
