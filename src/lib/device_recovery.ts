@@ -25,7 +25,7 @@ export async function recoveryFromToken(token: string): Promise<RecoveryEnrollme
   if (!parsed) return null;
   const recovery = await acrossTenants(
     DeviceRecovery.findById(parsed._id).select('+secretHash +pushToken'),
-  ).lean();
+  ).lean<RecoveryEnrollment & { secretHash: string }>();
   if (!recovery || !secretMatches(parsed.secret, recovery.secretHash)) return null;
   return recovery;
 }
@@ -121,7 +121,7 @@ export async function authorizeOrphanRelease(deviceId: Types.ObjectId): Promise<
     { _id: deviceId, orgId: existing.orgId, status: 'active' },
     { $set: { status: 'release_requested', commandId } },
     { returnDocument: 'after' },
-  ).select('+pushToken').lean();
+  ).select('+pushToken').lean<RecoveryEnrollment>();
   return updated;
 }
 
