@@ -21,7 +21,6 @@ import { createTokenFor, readSecretToken, secretMatches } from '../lib/tokens';
 import { validate } from '../lib/validate';
 import { Device } from '../models/device';
 import { DeviceCommand } from '../models/device_command';
-import { acknowledgeOrphanRelease, mirrorRecoveryCheckin, orphanReleaseCheckin, recordNormalRelease, registerRecovery } from '../lib/device_recovery';
 
 /** Commands the phone still has to carry out, and that a check-in should deliver. */
 const DELIVERABLE = ['pending', 'delivered'] as const;
@@ -44,7 +43,7 @@ export const enroll = publicController.createHandlers(validate('json', deviceEnr
   if (enrollToken.expiresAt.getTime() < Date.now()) throw new UnauthorizedError('This enrolment QR has expired');
 
   const credential = createTokenFor(device._id);
-  await withTransaction(async (session) => {
+  await withTransaction(async () => {
     await Device.updateOne(
       { _id: device._id, orgId: device.orgId },
       {
@@ -54,7 +53,6 @@ export const enroll = publicController.createHandlers(validate('json', deviceEnr
         $unset: { enrollToken: 1 },
       },
     );
-    await registerRecovery(device, credential.secretHash, pushToken, session);
     await recordSystemAudit(device.orgId, { action: 'device.enrolled', entity: 'device', entityId: device._id, branchId: device.branchId, summary: 'Phone enrolled the management app' });
   });
 
@@ -63,7 +61,6 @@ export const enroll = publicController.createHandlers(validate('json', deviceEnr
 
 /** POST /device/checkin — the phone reports in, collects pending commands (marked delivered) and the lock screen. */
 export const checkin = deviceController.createHandlers(validate('json', deviceCheckinSchema), async (c) => {
-  if (c.var.recovery) return c.json({ data: orphanReleaseCheckin(c.var.recovery) });
   const { device } = c.var;
   const { pushToken, appVersion, customerApp } = c.req.valid('json');
 
@@ -72,8 +69,7 @@ export const checkin = deviceController.createHandlers(validate('json', deviceCh
   if (appVersion !== undefined) set['enrollment.appVersion'] = appVersion;
   if (customerApp !== undefined) set['enrollment.customerApp'] = { ...customerApp, reportedAt: new Date() };
 
-  const payload = await withTransaction(async (session) => {
-    await mirrorRecoveryCheckin(device, pushToken, session);
+  const payload = await withTransaction(async () => {
     // Return the updated lock state with the check-in write; no second device read.
     const current = await Device.findOneAndUpdate(
       { _id: device._id, orgId: device.orgId },
@@ -106,16 +102,11 @@ const RESULT_LOCK_STATE = { lock: 'locked', unlock: 'unlocked', release: 'unlock
 
 /** POST /device/commands/:id/ack — the phone reports whether it carried out a delivered command. */
 export const acknowledge = deviceController.createHandlers(validate('json', commandAckSchema), async (c) => {
+  const { device } = c.var;
   const { result, detail = '' } = c.req.valid('json');
   const commandId = parseId(c.req.param('id'), 'Command');
-  if (c.var.recovery) {
-    const outcome = await acknowledgeOrphanRelease(c.var.recovery, String(commandId), result);
-    if (outcome === 'not_found') throw new NotFoundError('Command');
-    return c.json({ data: { _id: String(commandId), type: 'release', status: outcome } });
-  }
-  const { device } = c.var;
 
-  const updated = await withTransaction(async (session) => {
+  const updated = await withTransaction(async () => {
     // A successful acknowledgement takes one atomic read/write, not a read, write and reread.
     const command = await DeviceCommand.findOneAndUpdate(
       { _id: commandId, orgId: device.orgId, deviceId: device._id, status: { $in: [...DELIVERABLE] } },
@@ -144,7 +135,6 @@ export const acknowledge = deviceController.createHandlers(validate('json', comm
     const deviceSet: Record<string, unknown> = { lockState: RESULT_LOCK_STATE[command.type] };
     if (command.type === 'release') deviceSet.stockStatus = 'released';
     await Device.updateOne({ _id: device._id, orgId: device.orgId }, { $set: deviceSet });
-    if (command.type === 'release') await recordNormalRelease(device._id, device.orgId, session);
     await recordSystemAudit(device.orgId, {
       action: `device.${command.type}ed`,
       entity: 'device',

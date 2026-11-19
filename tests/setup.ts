@@ -33,10 +33,6 @@ afterAll(async () => {
   const { closeDb } = await import('../src/db/client');
   const { connection } = mongoose;
   if (connection.readyState === mongoose.ConnectionStates.connected && connection.name.includes('_test_')) {
-    const { recoveryDb, recoveryDbName } = await import('../src/models/device_recovery');
-    if (recoveryDbName === `${connection.name}_recovery` && recoveryDbName.includes('_test_')) {
-      await recoveryDb.dropDatabase();
-    }
     await connection.dropDatabase();
   }
   await closeDb();

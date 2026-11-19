@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import { DeviceRecovery, recoveryDb } from '../models/device_recovery';
 
 /**
  * Creates the collections and indexes of every registered model. Indexes are declared on each model's
@@ -12,7 +11,4 @@ export async function ensureIndexes() {
   for (const model of Object.values(mongoose.models)) {
     await model.createIndexes();
   }
-  // Keep the recovery collection outside the qist database before enrollment transactions begin.
-  await recoveryDb.createCollections();
-  await DeviceRecovery.createIndexes();
 }
