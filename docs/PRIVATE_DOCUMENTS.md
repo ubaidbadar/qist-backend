@@ -2,6 +2,20 @@
 
 Uploads are disabled per retailer by default. No document is sent to the public APK bucket. Existing check-in, lock/unlock and payment paths do not call the document processor.
 
+## Cloudflare-hosted processor for Qist
+
+Build and deploy from a Docker-capable development machine or CI runner using
+`npx wrangler deploy --config wrangler.documents.json` on a Workers Paid account.
+Set `DOCUMENT_PROCESSOR_SECRET` with `npx wrangler secret put DOCUMENT_PROCESSOR_SECRET --config wrangler.documents.json`.
+Use a random secret of at least 32 characters. The Worker authenticates requests before starting the container.
+The container downloads antivirus definitions on startup and may initially return 503.
+
+Use Operations to configure the same secret, the Worker's HTTPS origin as
+`DOCUMENT_PROCESSOR_URL`, and the private R2 settings on Qist API. Verify authenticated
+health and sample uploads before enabling a retailer. Cloudflare runs the scanner;
+the VPS only runs the existing API. For this deployment skip the internal processor
+installation in step 3 below.
+
 ## Deploy before enabling uploads
 
 1. Deploy this backend and confirm `GET /api/v1/capabilities` reports `documents: 1` and `organizationSettings: 2`. Do not deploy the new Settings save UI before this route is available.
