@@ -1,9 +1,0 @@
-**
-!package.json
-!bun.lock
-!tsconfig.json
-!src/
-!src/documents/
-!src/documents/**
-!deploy/
-!deploy/processor-entrypoint.sh

@@ -1,9 +1,0 @@
-{
-  "name": "qist-document-processor",
-  "main": "deploy/cloudflare-processor.mjs",
-  "compatibility_date": "2026-11-25",
-  "workers_dev": true,
-  "containers": [{ "class_name": "DocumentProcessor", "image": "./processor.Dockerfile", "instance_type": "standard-2", "max_instances": 1 }],
-  "durable_objects": { "bindings": [{ "name": "PROCESSOR", "class_name": "DocumentProcessor" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DocumentProcessor"] }]
-}
